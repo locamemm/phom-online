@@ -1,0 +1,1125 @@
+/* Root variables for design tokens (Pixel Art theme) */
+:root {
+    --primary-color: #5a2e17;
+    --secondary-color: #3d1b0b;
+    --accent-color: #dfb76c;
+    --dark-border: #1a1a1a;
+    --straw-bg: #e6c280;
+    --straw-accent: #d2b070;
+    --mat-border: #8c2518;
+    --bg-dark: #22130b;
+    --card-width: 64px;
+    --card-height: 88px;
+    --card-red: #e53935;
+    --card-black: #1a1a1a;
+    --hud-bg: #2d160b;
+    --shadow-color: rgba(0, 0, 0, 0.4);
+}
+
+/* Base Styles */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+body {
+    font-family: 'VT323', monospace;
+    font-size: 20px;
+    background-color: var(--bg-dark);
+    color: #eeddcc;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* Master Wrapper */
+.game-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(circle, rgba(0,0,0,0) 40%, rgba(0,0,0,0.65) 100%);
+}
+
+/* 2D Viewport Container (Flattens the screen) */
+.room-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    z-index: 2;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 2D Wood Floor */
+.floor-3d {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform: none; /* No 3D tilt! */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    
+    /* Pixel wood pattern */
+    background-color: #361b0d;
+    background-image: 
+        repeating-linear-gradient(90deg, 
+            transparent, 
+            transparent 120px, 
+            #220d04 120px, 
+            #220d04 124px
+        ),
+        repeating-linear-gradient(0deg, 
+            transparent, 
+            transparent 240px, 
+            rgba(0,0,0,0.15) 240px, 
+            rgba(0,0,0,0.15) 244px
+        );
+}
+
+/* Flat Straw Mat (Chiếu Cói 2D) */
+.straw-mat {
+    position: relative;
+    width: 760px;
+    height: 520px;
+    background-color: var(--straw-bg);
+    /* Pixel weave grid pattern */
+    background-image: 
+        repeating-linear-gradient(90deg, 
+            transparent, 
+            transparent 10px, 
+            rgba(0,0,0,0.06) 10px, 
+            rgba(0,0,0,0.06) 12px
+        ),
+        repeating-linear-gradient(0deg, 
+            transparent, 
+            transparent 10px, 
+            rgba(255,255,255,0.08) 10px, 
+            rgba(255,255,255,0.08) 12px
+        );
+    
+    /* Thick retro border */
+    border: 12px solid var(--dark-border);
+    outline: 4px solid var(--accent-color);
+    outline-offset: -16px;
+    
+    /* Sharp retro shadow */
+    box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Red fabric details around mat border */
+.straw-mat::before {
+    content: '';
+    position: absolute;
+    top: -12px;
+    left: -12px;
+    right: -12px;
+    bottom: -12px;
+    border: 4px solid var(--mat-border);
+    pointer-events: none;
+}
+
+/* Center Deco Items (Tea Set, Sunflower Seeds 2D Pixel) */
+.decorations-center {
+    position: absolute;
+    top: 50%;
+    left: 55%;
+    width: 140px;
+    height: 140px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+/* Wooden Tea Tray (2D flat circle with thick borders) */
+.tea-tray {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: #522713;
+    border: 4px solid var(--dark-border);
+    box-shadow: 4px 4px 0px rgba(0,0,0,0.3);
+    top: 0px;
+    left: 0px;
+}
+
+/* Teapot & Cups (Cute 2D flat drawings) */
+.teapot {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #a33c24;
+    border: 4px solid var(--dark-border);
+    top: 20px;
+    left: 20px;
+}
+.teapot::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 12px;
+    border: 3px solid var(--dark-border);
+    border-radius: 4px;
+    top: 6px;
+    left: -10px;
+}
+
+.teacup {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #dfb76c;
+    border: 3px solid var(--dark-border);
+}
+.cup-1 { top: 8px; left: 33px; }
+.cup-2 { top: 48px; left: 14px; }
+.cup-3 { top: 42px; left: 52px; }
+
+/* Sunflower Seeds Plate */
+.sunflower-seeds-plate {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #eae2d5;
+    border: 4px solid var(--dark-border);
+    box-shadow: 4px 4px 0px rgba(0,0,0,0.3);
+    top: 65px;
+    left: 65px;
+}
+
+.seed {
+    position: absolute;
+    width: 6px;
+    height: 3px;
+    background: #1a1a1a;
+    border-radius: 2px;
+}
+.s1 { top: 18px; left: 22px; transform: rotate(15deg); }
+.s2 { top: 28px; left: 14px; transform: rotate(-45deg); }
+.s3 { top: 32px; left: 35px; transform: rotate(80deg); }
+.s4 { top: 40px; left: 24px; transform: rotate(-10deg); }
+.s5 { top: 20px; left: 36px; transform: rotate(110deg); }
+
+/* Center Card Pile (Nọc) */
+.center-card-pile {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--card-width);
+    height: var(--card-height);
+    transform: translate(-150px, -44px);
+    cursor: pointer;
+}
+
+/* Stacking layers visually for 2D */
+.card-back-stack {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Stack borders for 2D pile look */
+.card-back-stack::before {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 100%;
+    height: 100%;
+    background: #1a1a1a;
+    border: 3px solid var(--dark-border);
+    border-radius: 4px;
+    z-index: -1;
+}
+.card-back-stack::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 100%;
+    height: 100%;
+    background: #1a1a1a;
+    border: 3px solid var(--dark-border);
+    border-radius: 4px;
+    z-index: -2;
+}
+
+/* Pile Card Count Label (Pixel banner) */
+.pile-count {
+    position: absolute;
+    bottom: -28px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a1a;
+    border: 2px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 1px 6px;
+    font-size: 16px;
+    font-family: 'VT323', monospace;
+    font-weight: bold;
+    white-space: nowrap;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.4);
+    pointer-events: none;
+}
+
+/* Discarded Cards Area on Mat */
+.discard-area {
+    position: absolute;
+    top: 15%;
+    left: 15%;
+    width: 70%;
+    height: 70%;
+    pointer-events: none;
+}
+
+/* Player Seating Zones around the Mat (Flat 2D layout) */
+.player-zone {
+    position: absolute;
+    transition: all 0.2s steps(4);
+}
+
+/* Seating positions 2D */
+.player-bottom {
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 460px;
+    height: 120px;
+}
+
+.player-right {
+    right: -125px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 160px;
+    height: 280px;
+}
+
+.player-top {
+    top: -110px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 400px;
+    height: 120px;
+}
+
+.player-left {
+    left: -125px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 160px;
+    height: 280px;
+}
+
+/* Player Profile Badge (Pixel style card) */
+.player-avatar-container {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    background: #331d11;
+    border: 3px solid var(--dark-border);
+    box-shadow: 4px 4px 0px rgba(0,0,0,0.4);
+    border-radius: 0;
+    pointer-events: auto;
+    z-index: 100;
+}
+
+/* Specific Badge Placements */
+.player-bottom .player-avatar-container {
+    top: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.player-right .player-avatar-container {
+    top: -45px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.player-top .player-avatar-container {
+    bottom: 0px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.player-left .player-avatar-container {
+    top: -45px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Avatar Blocks */
+.avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 0; /* Square retro avatar */
+    border: 3px solid var(--accent-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 16px;
+    font-weight: bold;
+    color: var(--accent-color);
+    text-shadow: 1px 1px 0px #000;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.4);
+}
+
+.user-avatar { background: #1e3d59; border-color: #ffc857; color: #ffc857; }
+.ai-avatar-1 { background: #8c2518; border-color: #ff7b54; color: #ff7b54; }
+.ai-avatar-2 { background: #2b5c3f; border-color: #76ff03; color: #76ff03; }
+.ai-avatar-3 { background: #5a188c; border-color: #e040fb; color: #e040fb; }
+
+/* Active player turn outline */
+.player-zone.active .player-avatar-container {
+    border-color: var(--accent-color);
+    background: #4d2b1a;
+    box-shadow: 
+        0px 0px 0px 2px var(--accent-color),
+        4px 4px 0px rgba(0,0,0,0.5);
+}
+
+.player-info {
+    display: flex;
+    flex-direction: column;
+}
+.player-name {
+    font-size: 16px;
+    font-weight: bold;
+    color: #fff;
+}
+.player-balance {
+    font-size: 14px;
+    color: var(--accent-color);
+}
+
+/* Status bubble (Pixel talk bubble) */
+.player-status-tag {
+    position: absolute;
+    top: -24px;
+    right: -10px;
+    background: #c62828;
+    border: 2px solid var(--dark-border);
+    color: #fff;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 1px 6px;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.3);
+    opacity: 0;
+    transform: translateY(5px);
+    transition: all 0.15s steps(3);
+}
+.player-status-tag.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* 2D Flat Card Style */
+.card-3d {
+    position: absolute;
+    width: var(--card-width);
+    height: var(--card-height);
+    cursor: pointer;
+    transition: transform 0.15s steps(3);
+}
+
+.card-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Card faces 2D */
+.card-face {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 4px;
+    border: 3px solid var(--dark-border);
+    box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.4);
+}
+
+/* Card Back Design (Classic Pixel Caro/Diamonds Pattern) */
+.card-face-back {
+    background-color: #8c1c1c;
+    background-image: 
+        repeating-linear-gradient(45deg, var(--dark-border) 0px, var(--dark-border) 2px, transparent 2px, transparent 10px),
+        repeating-linear-gradient(-45deg, var(--dark-border) 0px, var(--dark-border) 2px, transparent 2px, transparent 10px);
+    background-size: 8px 8px;
+    display: block;
+}
+
+.card-face-front {
+    background-color: #faf6ee;
+    color: inherit; /* Inherit color from card-3d suit definition */
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Hide back face when front is active */
+.card-3d.flipped .card-face-front { display: none; }
+.card-3d:not(.flipped) .card-face-back { display: none; }
+
+/* Color-coded suits for 2D pixel style */
+.card-3d.suit-spades { color: #303f9f; }    /* Dark Blue Spades */
+.card-3d.suit-clubs { color: #2e7d32; }     /* Green Clubs */
+.card-3d.suit-diamonds { color: #e65100; }  /* Orange Diamonds */
+.card-3d.suit-hearts { color: #c62828; }    /* Red Hearts */
+
+/* Rank corner label */
+.card-corner {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 0.85;
+}
+.card-corner .suit-mini {
+    font-size: 14px;
+    margin-top: 1px;
+}
+
+.card-corner.top-left {
+    top: 4px;
+    left: 6px;
+}
+
+.card-corner.top-right {
+    top: 4px;
+    right: 6px;
+}
+
+.card-corner.bottom-left {
+    bottom: 4px;
+    left: 6px;
+}
+
+.card-corner.bottom-right {
+    bottom: 4px;
+    right: 6px;
+}
+
+/* Large Suit in Center */
+.card-center-suit {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 28px;
+    line-height: 1;
+}
+
+/* Main User Hand Arrangement (Flat row) */
+.player-hand-container {
+    position: absolute;
+    bottom: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    height: 110px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+}
+
+/* Special Horizontal Spacing using CSS variables, snappy lift */
+.player-hand-container .card-3d {
+    --offset-x: 0px;
+    --angle-z: 0deg;
+    --arch-y: 0px;
+    --lift-y: 0px;
+    --scale: 1;
+
+    position: absolute;
+    bottom: 5px;
+    transform-origin: bottom center; /* Pivot from the bottom for a nice arc fan shape */
+    transform: 
+        translateX(var(--offset-x)) 
+        rotate(var(--angle-z))
+        translateY(calc(var(--arch-y) + var(--lift-y)))
+        scale(var(--scale));
+}
+
+
+
+.player-hand-container .card-3d.selected {
+    --lift-y: -38px;
+    --scale: 1.04;
+    border: 3px solid var(--accent-color);
+    box-shadow: 
+        0px 0px 0px 2px var(--accent-color),
+        4px 4px 0px rgba(0,0,0,0.5);
+}
+
+/* Eaten Cards Tray (Flat 2D near players) - Hidden because unified */
+.player-eaten-cards {
+    display: none !important;
+}
+
+/* Melds (Phỏm) Tray (Flat 2D before the player) */
+.player-melds {
+    position: absolute;
+    display: flex;
+    gap: 12px;
+    z-index: 10;
+    pointer-events: none;
+}
+.player-bottom .player-melds {
+    top: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 460px;
+    height: 88px;
+    display: block;
+}
+.player-bottom .player-melds .phom-slot {
+    position: absolute;
+    top: 0;
+}
+.player-bottom .player-melds .phom-slot:nth-child(1) {
+    left: -50px;
+}
+.player-bottom .player-melds .phom-slot:nth-child(2) {
+    right: -35px;
+}
+.player-bottom .player-melds .phom-slot:nth-child(3) {
+    right: -155px;
+}
+.player-right .player-melds {
+    top: 60px;
+    left: -110px;
+    flex-direction: column;
+}
+.player-top .player-melds {
+    top: 130px;
+    left: 40px;
+    flex-direction: row;
+}
+.player-left .player-melds {
+    top: 60px;
+    right: -110px;
+    flex-direction: column;
+}
+
+/* Phom Slot styles */
+.phom-slot {
+    width: 112px;
+    height: 88px;
+    border: 2px dashed rgba(223, 183, 108, 0.25);
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    position: relative;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Meld card stacks layout */
+.meld-stack {
+    display: flex;
+    flex-direction: row;
+    position: relative;
+    width: auto;
+    height: var(--card-height);
+    pointer-events: auto;
+}
+
+.eaten-phom-group {
+    position: relative;
+    width: 90px;
+    height: var(--card-height);
+    display: inline-block;
+    pointer-events: auto;
+}
+
+.eaten-phom-group .card-3d {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* Other Players hand container (card backs only) */
+.player-hand-back-container {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    height: 90px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+}
+
+/* HUD Overlay Styles (Crisp 2D, retro gaming feel) */
+.hud-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Wooden buttons & select box (Pixel block design) */
+.wood-btn, .wood-select {
+    pointer-events: auto;
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    color: #ffd8a8;
+    background: #5a2e17;
+    border: 3px solid var(--dark-border);
+    border-radius: 0; /* Square edges for retro feel */
+    box-shadow: 4px 4px 0px var(--dark-border);
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: none; /* Instant snap */
+}
+
+.wood-btn:hover {
+    background: #763b1a;
+    color: #fff;
+    box-shadow: 6px 6px 0px var(--dark-border);
+}
+
+/* Mechanical lún button press */
+.wood-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px var(--dark-border);
+}
+
+.wood-btn:disabled {
+    background: #443c37;
+    border-color: #2e2825;
+    color: #7c726a;
+    box-shadow: none;
+    cursor: not-allowed;
+    transform: none;
+    pointer-events: none;
+}
+
+/* Header/Top Bar */
+.top-bar {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    right: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-family: 'Silkscreen', monospace;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--accent-color);
+    text-shadow: 3px 3px 0px #1a1a1a;
+}
+
+.bet-info-container {
+    background: var(--hud-bg);
+    border: 3px solid var(--dark-border);
+    padding: 4px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    color: #e3d2c1;
+    pointer-events: auto;
+    box-shadow: 4px 4px 0px rgba(0,0,0,0.4);
+}
+
+.wood-select {
+    padding: 2px 8px;
+    outline: none;
+    font-size: 18px;
+    border-radius: 0;
+}
+
+.hud-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.small-btn {
+    padding: 4px 10px;
+    font-size: 18px;
+}
+
+/* Action Control Panel */
+.action-panel {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    background: #331d11;
+    border: 3px solid var(--dark-border);
+    padding: 10px 20px;
+    box-shadow: 8px 8px 0px rgba(0,0,0,0.5);
+    z-index: 100;
+}
+
+.btn-action {
+    padding: 8px 18px;
+    font-size: 20px;
+    min-width: 90px;
+}
+
+.btn-secondary {
+    padding: 8px 14px;
+    font-size: 20px;
+    background: #3a322d;
+    color: #d1c5bc;
+}
+.btn-secondary:hover {
+    background: #473e38;
+}
+
+/* Game Log / Journal Panel */
+.game-log-panel {
+    position: absolute;
+    top: 75px;
+    left: 15px;
+    width: 250px;
+    height: 160px;
+    background: var(--hud-bg);
+    border: 3px solid var(--dark-border);
+    box-shadow: 4px 4px 0px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.panel-header {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 4px 10px;
+    font-size: 15px;
+    font-family: 'Silkscreen', monospace;
+    font-weight: 700;
+    color: var(--accent-color);
+    border-bottom: 2px solid var(--dark-border);
+}
+
+.log-messages {
+    flex: 1;
+    padding: 8px;
+    font-size: 18px;
+    line-height: 1.3;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Log Scrollbar Retro style */
+.log-messages::-webkit-scrollbar { width: 6px; }
+.log-messages::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+.log-messages::-webkit-scrollbar-thumb { background: var(--accent-color); border: 1px solid var(--dark-border); }
+
+.log-message {
+    padding: 2px 4px;
+    border-radius: 0;
+}
+
+.log-message.system { color: #aaa296; }
+.log-message.player { color: #5cb8ff; }
+.log-message.ai { color: #ff9f5c; }
+.log-message.win { color: #5cff9f; font-weight: bold; }
+.log-message.alert { color: #ff5c5c; font-weight: bold; }
+
+/* Modals & Overlays (Retro Pixel block) */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.75);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 500;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s steps(3);
+}
+
+.modal-overlay.show {
+    display: flex;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Wooden Modal Box Styling (Retro Pixel box) */
+.wood-modal {
+    background: #2a160d;
+    border: 4px solid var(--dark-border);
+    outline: 4px solid var(--accent-color);
+    outline-offset: -12px;
+    border-radius: 0;
+    width: 520px;
+    max-width: 90%;
+    max-height: 80vh;
+    box-shadow: 12px 12px 0px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: scale(0.95);
+    transition: transform 0.2s steps(3);
+}
+
+.modal-overlay.show .wood-modal {
+    transform: scale(1);
+}
+
+.modal-header {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 18px 24px 10px;
+    border-bottom: 3px solid var(--dark-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    font-family: 'Silkscreen', monospace;
+    color: var(--accent-color);
+    font-size: 20px;
+}
+
+.close-btn {
+    font-size: 28px;
+    font-weight: bold;
+    color: #a89486;
+    cursor: pointer;
+}
+.close-btn:hover { color: #fff; }
+
+.modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    font-size: 18px;
+    line-height: 1.4;
+    color: #ddd4c9;
+}
+
+.modal-body h3 {
+    margin-top: 12px;
+    margin-bottom: 6px;
+    color: var(--accent-color);
+    border-bottom: 2px solid var(--dark-border);
+    padding-bottom: 2px;
+}
+.modal-body ul { margin-left: 16px; margin-bottom: 10px; }
+.modal-body p { margin-bottom: 10px; }
+
+.modal-footer {
+    background: rgba(0,0,0,0.25);
+    padding: 12px 24px;
+    border-top: 3px solid var(--dark-border);
+    display: flex;
+    justify-content: flex-end;
+}
+
+.big-btn {
+    padding: 8px 24px;
+    font-size: 22px;
+}
+
+/* Score Table inside Game Over Modal */
+.score-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 18px;
+}
+
+.score-table th, .score-table td {
+    padding: 10px;
+    text-align: left;
+    border-bottom: 2px solid var(--dark-border);
+}
+
+.score-table th {
+    background: rgba(0,0,0,0.4);
+    color: var(--accent-color);
+    font-weight: bold;
+}
+
+/* Winner Banner */
+.winner-announcement {
+    text-align: center;
+    font-size: 24px;
+    font-weight: bold;
+    color: #5cff9f;
+    margin: 15px 0;
+    text-shadow: 2px 2px 0px #000;
+}
+
+/* Floating Text Effect Overlay (Retro blocky jump) */
+.floating-text-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.float-tag {
+    position: absolute;
+    font-weight: bold;
+    font-size: 26px;
+    font-family: 'VT323', monospace;
+    color: var(--accent-color);
+    text-shadow: 2px 2px 0px #000;
+    animation: floatUpFade 1.5s steps(8) forwards; /* Step animation for pixel look */
+    white-space: nowrap;
+}
+
+.float-tag.red { color: #ff5c5c; }
+.float-tag.green { color: #5cff9f; }
+
+@keyframes floatUpFade {
+    0% { transform: translateY(0); opacity: 0; }
+    10% { transform: translateY(-15px); opacity: 1; }
+    90% { transform: translateY(-60px); opacity: 1; }
+    100% { transform: translateY(-70px); opacity: 0; }
+}
+
+/* Responsive tweaks for 2D */
+@media (max-width: 800px) {
+    .straw-mat {
+        transform: scale(0.8);
+    }
+    .game-log-panel {
+        display: none;
+    }
+}
+@media (max-height: 600px) {
+    .straw-mat {
+        transform: scale(0.7);
+    }
+    .action-panel {
+        bottom: 8px;
+    }
+}
+
+/* Pixel Particles & Card Animation Styles */
+.pixel-particle {
+    position: fixed;
+    width: 6px;
+    height: 6px;
+    pointer-events: none;
+    z-index: 10000;
+    animation: particleSpread 0.4s steps(6) forwards;
+    border: 1px solid #1a1a1a;
+}
+
+@keyframes particleSpread {
+    0% { transform: translate(0, 0) scale(1); opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)) scale(0.5); opacity: 0; }
+}
+
+.animating-card {
+    pointer-events: none !important;
+}
+
+/* Dealer Badge on Avatar Container */
+.player-zone.is-dealer .player-avatar-container::after {
+    content: 'CHIA';
+    position: absolute;
+    top: -16px;
+    left: -12px;
+    background: #ffcc00;
+    color: #1a1a1a;
+    border: 3px solid var(--dark-border);
+    font-family: 'VT323', monospace;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 1px 6px;
+    box-shadow: 2px 2px 0px #1a1a1a;
+    z-index: 10;
+}
+
+/* Game Over Modal on the right on larger screens to view the board */
+@media (min-width: 1000px) {
+    #gameOverModal.show {
+        justify-content: flex-end;
+        align-items: center;
+        padding-right: 40px;
+        background: rgba(0, 0, 0, 0.3);
+    }
+}
+
+/* Minimize button */
+.minimize-btn {
+    font-size: 20px;
+    cursor: pointer;
+    color: #a89486;
+    margin-left: 15px;
+    font-weight: bold;
+    line-height: 1;
+}
+.minimize-btn:hover {
+    color: #fff;
+}
+
+#gameOverModal.minimized {
+    background: transparent !important;
+    pointer-events: none !important;
+    justify-content: flex-end !important;
+    align-items: flex-end !important;
+}
+
+#gameOverModal.minimized .wood-modal {
+    pointer-events: auto !important;
+    max-height: 55px !important;
+    height: auto !important;
+    width: 220px !important;
+    margin-right: 20px !important;
+    margin-bottom: 20px !important;
+    transform: none !important;
+    box-shadow: 6px 6px 0px rgba(0,0,0,0.5) !important;
+    outline-width: 2px !important;
+    outline-offset: -8px !important;
+}
+
+#gameOverModal.minimized .modal-header {
+    padding: 10px 15px !important;
+}
+
+#gameOverModal.minimized .modal-header h2 {
+    font-size: 16px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#gameOverModal.minimized .modal-body,
+#gameOverModal.minimized .modal-footer {
+    display: none !important;
+}
