@@ -33,20 +33,35 @@ const rooms = {}; // roomId -> state
 io.on('connection', (socket) => {
   console.log('socket connected', socket.id);
 
-  socket.on('createRoom', ({roomId, name}, cb) => {
+  socket.on('createRoom', ({roomId, name, preferredSeat}, cb) => {
     if(!roomId) roomId = Math.random().toString(36).slice(2,8);
     rooms[roomId] = rooms[roomId] || {
-      players: [],
+      players: [], // list of player objects {socketId, name, hand, seatIdx}
       drawPile: [],
       tableDiscards: [[],[],[],[]],
-      currentTurnIdx: 0,
+      currentTurnSeatIdx: 0,
       lastDiscardedCard: null
     };
-    rooms[roomId].players.push({id: socket.id, name: name || 'Player', socketId: socket.id});
+    const room = rooms[roomId];
+    // determine seat: try preferredSeat if provided and free
+    const usedSeats = room.players.map(p => p.seatIdx);
+    let seatIdx = null;
+    if (typeof preferredSeat === 'number' && preferredSeat >=0 && preferredSeat < 4 && !usedSeats.includes(preferredSeat)) {
+      seatIdx = preferredSeat;
+    } else {
+      // find first free seat 0..3
+      for(let i=0;i<4;i++){ if(!usedSeats.includes(i)){ seatIdx = i; break; } }
+    }
+    if(seatIdx === null) return cb && cb({error: 'Room full'});
+    const playerObj = {id: socket.id, name: name || 'Player', socketId: socket.id, hand: [], seatIdx};
+    room.players.push(playerObj);
     socket.join(roomId);
-    console.log(`room ${roomId} created by ${socket.id}`);
-    cb && cb({roomId});
-    io.to(roomId).emit('roomUpdate', {players: rooms[roomId].players.map(p=>({name:p.name}))});
+    console.log(`room ${roomId} created by ${socket.id} at seat ${seatIdx}`);
+    cb && cb({roomId, seatIdx});
+    // broadcast players by seat (array length 4)
+    const playersBySeat = new Array(4).fill(null);
+    room.players.forEach(p => { playersBySeat[p.seatIdx] = {name: p.name}; });
+    io.to(roomId).emit('roomUpdate', {players: playersBySeat});
   });
 
   socket.on('joinRoom', ({roomId, name}, cb) => {
@@ -59,10 +74,22 @@ io.on('connection', (socket) => {
       cb && cb({error: 'Room is full'});
       return;
     }
-    room.players.push({id: socket.id, name: name || 'Player', socketId: socket.id});
+    // try to honor preferredSeat if provided
+    const usedSeats = room.players.map(p => p.seatIdx);
+    let seatIdx = null;
+    if (typeof preferredSeat === 'number' && preferredSeat >=0 && preferredSeat < 4 && !usedSeats.includes(preferredSeat)) {
+      seatIdx = preferredSeat;
+    } else {
+      for(let i=0;i<4;i++){ if(!usedSeats.includes(i)){ seatIdx = i; break; } }
+    }
+    if(seatIdx === null) return cb && cb({error:'Room full'});
+    const playerObj = {id: socket.id, name: name || 'Player', socketId: socket.id, hand: [], seatIdx};
+    room.players.push(playerObj);
     socket.join(roomId);
-    cb && cb({roomId});
-    io.to(roomId).emit('roomUpdate', {players: room.players.map(p=>({name:p.name}))});
+    cb && cb({roomId, seatIdx});
+    const playersBySeat = new Array(4).fill(null);
+    room.players.forEach(p => { playersBySeat[p.seatIdx] = {name: p.name}; });
+    io.to(roomId).emit('roomUpdate', {players: playersBySeat});
   });
 
   socket.on('startGame', ({roomId}, cb) => {
@@ -71,40 +98,51 @@ io.on('connection', (socket) => {
     // init deck
     let deck = createDeck();
     shuffle(deck);
-    // pick dealer randomly
-    const dealerIdx = Math.floor(Math.random()*room.players.length);
+    // occupied seats
+    const occupiedSeats = room.players.map(p => p.seatIdx).sort((a,b)=>a-b);
+    if(occupiedSeats.length === 0) return cb && cb({error:'No players in room'});
+    // pick dealer randomly among occupied seats
+    const dealerSeatIdx = occupiedSeats[Math.floor(Math.random()*occupiedSeats.length)];
     room.drawPile = deck;
     room.tableDiscards = [[],[],[],[]];
-    room.currentTurnIdx = dealerIdx;
+    room.currentTurnSeatIdx = dealerSeatIdx;
     room.lastDiscardedCard = null;
-    // deal: give 10 to dealer, 9 to others
-    const hands = [];
-    for(let i=0;i<room.players.length;i++) hands.push([]);
-    // deal order around seats (0..n-1)
-    let dealtCounts = new Array(room.players.length).fill(0);
-    const cardsToDeal = room.players.length*9 + 1; // dealer gets 10
-    let curr = dealerIdx;
-    while(dealtCounts.reduce((a,b)=>a+b,0) < cardsToDeal){
-      let limit = (curr === dealerIdx) ? 10 : 9;
-      if(dealtCounts[curr] < limit){
+    // prepare hands keyed by seatIdx
+    const hands = {};
+    const dealtCounts = {};
+    occupiedSeats.forEach(s => { hands[s] = []; dealtCounts[s] = 0; });
+    const cardsToDeal = occupiedSeats.length*9 + 1; // dealer gets 10
+    let currSeat = dealerSeatIdx;
+    const nextSeat = (seat) => {
+      const idx = occupiedSeats.indexOf(seat);
+      return occupiedSeats[(idx + 1) % occupiedSeats.length];
+    };
+    while(Object.values(dealtCounts).reduce((a,b)=>a+b,0) < cardsToDeal){
+      const limit = (currSeat === dealerSeatIdx) ? 10 : 9;
+      if(dealtCounts[currSeat] < limit){
         const c = room.drawPile.pop();
-        hands[curr].push(c);
-        dealtCounts[curr]++;
+        hands[currSeat].push(c);
+        dealtCounts[currSeat]++;
       }
-      curr = (curr + 1) % room.players.length;
+      currSeat = nextSeat(currSeat);
     }
     // Send each player their hand privately
-    room.players.forEach((p, idx) => {
+    const playersBySeat = new Array(4).fill(null);
+    room.players.forEach(pl => { playersBySeat[pl.seatIdx] = {name: pl.name}; });
+    room.players.forEach((p) => {
       const sock = io.sockets.sockets.get(p.socketId);
-      if(sock) sock.emit('dealHands', {hand: hands[idx], seatIdx: idx, dealerIdx, players: room.players.map(pl=>({name:pl.name}))});
+      if(sock) sock.emit('dealHands', {hand: hands[p.seatIdx] || [], seatIdx: p.seatIdx, dealerIdx: dealerSeatIdx, players: playersBySeat});
     });
 
     // Broadcast public state
+    const playersHandsCounts = new Array(4).fill(0);
+    room.players.forEach(p => { playersHandsCounts[p.seatIdx] = (p.hand? p.hand.length : (hands[p.seatIdx]||[]).length); });
     io.to(roomId).emit('stateUpdate', {
       drawPileCount: room.drawPile.length,
       tableDiscards: room.tableDiscards,
-      currentTurnIdx: room.currentTurnIdx,
-      lastDiscardedCard: room.lastDiscardedCard
+      currentTurnSeatIdx: room.currentTurnSeatIdx,
+      lastDiscardedCard: room.lastDiscardedCard,
+      playersHandsCounts
     });
 
     cb && cb({ok:true});
@@ -114,22 +152,24 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if(!room) return cb && cb({error:'Room not found'});
     if(room.drawPile.length === 0) return cb && cb({error:'Draw pile empty'});
-    if(room.players[room.currentTurnIdx].socketId !== socket.id) return cb && cb({error:'Not your turn'});
-    const card = room.drawPile.pop();
-    // find player and append
-    const pl = room.players[seatIdx];
+    if(room.currentTurnSeatIdx !== seatIdx) return cb && cb({error:'Not your turn'});
+    const pl = room.players.find(p => p.seatIdx === seatIdx);
     if(!pl) return cb && cb({error:'Player not found'});
+    const card = room.drawPile.pop();
     pl.hand = pl.hand || [];
     pl.hand.push(card);
-    // broadcast private hand update
     const sock = io.sockets.sockets.get(pl.socketId);
     if(sock) sock.emit('handUpdate', {hand: pl.hand});
 
+    // broadcast public state with seat-based counts
+    const playersHandsCounts = new Array(4).fill(0);
+    room.players.forEach(p => { playersHandsCounts[p.seatIdx] = (p.hand? p.hand.length : 0); });
     io.to(roomId).emit('stateUpdate', {
       drawPileCount: room.drawPile.length,
       tableDiscards: room.tableDiscards,
-      currentTurnIdx: room.currentTurnIdx,
-      lastDiscardedCard: room.lastDiscardedCard
+      currentTurnSeatIdx: room.currentTurnSeatIdx,
+      lastDiscardedCard: room.lastDiscardedCard,
+      playersHandsCounts
     });
     cb && cb({ok:true, card});
   });
@@ -137,27 +177,30 @@ io.on('connection', (socket) => {
   socket.on('playerDiscard', ({roomId, seatIdx, card}, cb) => {
     const room = rooms[roomId];
     if(!room) return cb && cb({error:'Room not found'});
-    if(room.players[room.currentTurnIdx].socketId !== socket.id) return cb && cb({error:'Not your turn'});
-    // remove card from player's hand
-    const pl = room.players[seatIdx];
+    if(room.currentTurnSeatIdx !== seatIdx) return cb && cb({error:'Not your turn'});
+    const pl = room.players.find(p => p.seatIdx === seatIdx);
     if(!pl || !pl.hand) return cb && cb({error:'Player or hand not found'});
     const idx = pl.hand.findIndex(c => c.id === card.id);
     if(idx === -1) return cb && cb({error:'Card not in hand'});
     const removed = pl.hand.splice(idx,1)[0];
     room.tableDiscards[seatIdx].push(removed);
     room.lastDiscardedCard = removed;
-    // advance turn
-    room.currentTurnIdx = (room.currentTurnIdx + 1) % room.players.length;
+    // advance turn to next occupied seat
+    const occupiedSeats = room.players.map(p=>p.seatIdx).sort((a,b)=>a-b);
+    const currIndex = occupiedSeats.indexOf(seatIdx);
+    const nextSeat = occupiedSeats[(currIndex + 1) % occupiedSeats.length];
+    room.currentTurnSeatIdx = nextSeat;
 
     // notify all
+    const playersHandsCounts = new Array(4).fill(0);
+    room.players.forEach(p => { playersHandsCounts[p.seatIdx] = (p.hand? p.hand.length : 0); });
     io.to(roomId).emit('stateUpdate', {
       drawPileCount: room.drawPile.length,
       tableDiscards: room.tableDiscards,
-      currentTurnIdx: room.currentTurnIdx,
+      currentTurnSeatIdx: room.currentTurnSeatIdx,
       lastDiscardedCard: room.lastDiscardedCard,
-      playersHandsCounts: room.players.map(p=> (p.hand? p.hand.length:0) )
+      playersHandsCounts
     });
-    // send updated hand to discarder
     const sock = io.sockets.sockets.get(pl.socketId);
     if(sock) sock.emit('handUpdate', {hand: pl.hand});
 
@@ -167,9 +210,16 @@ io.on('connection', (socket) => {
   socket.on('disconnecting', () => {
     // remove from rooms
     for(const roomId of socket.rooms){
+      // skip the socket's own room id
+      if(roomId === socket.id) continue;
       if(rooms[roomId]){
         rooms[roomId].players = rooms[roomId].players.filter(p => p.socketId !== socket.id);
-        io.to(roomId).emit('roomUpdate', {players: rooms[roomId].players.map(p=>({name:p.name}))});
+        if(rooms[roomId].players.length === 0){
+          delete rooms[roomId];
+          console.log(`room ${roomId} deleted (empty)`);
+        } else {
+          io.to(roomId).emit('roomUpdate', {players: rooms[roomId].players.map(p=>({name:p.name}))});
+        }
       }
     }
   });

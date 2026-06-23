@@ -399,6 +399,12 @@ body {
     box-shadow: 2px 2px 0px rgba(0,0,0,0.4);
 }
 
+.avatar.empty-seat {
+    opacity: 0.45;
+    color: #9a7b5a;
+    border-color: rgba(255,255,255,0.04);
+}
+
 .user-avatar { background: #1e3d59; border-color: #ffc857; color: #ffc857; }
 .ai-avatar-1 { background: #8c2518; border-color: #ff7b54; color: #ff7b54; }
 .ai-avatar-2 { background: #2b5c3f; border-color: #76ff03; color: #76ff03; }
