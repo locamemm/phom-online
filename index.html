@@ -164,6 +164,30 @@
         </div>
 
         <!-- Popups & Modals -->
+        <!-- 0. Online Modal (Create/Join Room) -->
+        <div class="modal-overlay" id="onlineModal">
+            <div class="wood-modal">
+                <div class="modal-header">
+                    <h2>Chơi Online</h2>
+                </div>
+                <div class="modal-body" style="text-align: center;">
+                    <div id="onlineLobby">
+                        <p>Tạo phòng mới hoặc tham gia phòng của bạn bè!</p>
+                        <div class="online-controls-modal">
+                            <button class="wood-btn big-btn" id="btnCreateRoom">Tạo Phòng Mới</button>
+                            <hr style="border-color: var(--dark-border); margin: 20px 0; border-style: dashed;">
+                            <input type="text" id="txtRoomId" placeholder="Nhập mã phòng...">
+                            <button class="wood-btn" id="btnJoinRoom">Vào Phòng</button>
+                        </div>
+                    </div>
+                    <div id="roomInfo" style="display: none;">
+                        <p>Đã vào phòng: <b id="roomIdDisplay" style="color: var(--accent-color);"></b></p>
+                        <p id="playerCountDisplay">Đang chờ người chơi khác...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 3. History Modal -->
         <div class="modal-overlay" id="historyModal">
             <div class="wood-modal history-modal">

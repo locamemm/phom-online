@@ -1,3 +1,31 @@
+class NetworkManager {
+    constructor(gameManager) {
+        this.socket = null;
+        this.game = gameManager;
+        this.clientId = null;
+    }
+
+    connect(url) {
+        this.socket = new WebSocket(url);
+
+        this.socket.onopen = () => {
+            console.log("Connected to server");
+            document.getElementById('onlineModal').classList.add('show');
+        };
+
+        this.socket.onclose = () => console.log("Disconnected from server");
+
+        this.socket.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            this.game.handleServerMessage(message);
+        };
+    }
+
+    send(data) {
+        this.socket.send(JSON.stringify(data));
+    }
+}
+
 // --- WEB AUDIO SYNTHESIZER ---
 const AudioSynth = {
     ctx: null,
@@ -336,11 +364,23 @@ class GameManager {
         this.baseWidth = 760;
         this.baseHeight = 520;
         
+        this.network = new NetworkManager(this);
         this.initDOM();
-        this.resetGame();
+        // this.resetGame(); // Don't start the game immediately in multiplayer
     }
 
+    // Tách nhỏ hàm initDOM để dễ quản lý
     initDOM() {
+        this.initCoreButtons();
+        this.initModals();
+        this.initPanels();
+        this.initToggles();
+        this.initOnlineActions();
+        this.initGameActions();
+        this.initWindowEvents();
+    }
+
+    initCoreButtons() {
         // Core buttons
         document.getElementById('btnEat').addEventListener('click', () => this.playerEat());
         document.getElementById('btnDiscard').addEventListener('click', () => this.playerDiscard());
@@ -348,7 +388,9 @@ class GameManager {
         document.getElementById('btnLayMelds').addEventListener('click', () => this.playerLayMelds());
         document.getElementById('btnRestart').addEventListener('click', () => this.manualRestart());
         document.getElementById('btnNextGame').addEventListener('click', () => this.startNextGame());
-        
+    }
+
+    initModals() {
         // History Modal Listeners
         const btnHistory = document.getElementById('btnHistory');
         const historyModal = document.getElementById('historyModal');
@@ -375,7 +417,7 @@ class GameManager {
                 }
             });
         }
-        
+
         // Modals
         const helpModal = document.getElementById('helpModal');
         document.getElementById('btnHelp').addEventListener('click', () => {
@@ -386,7 +428,7 @@ class GameManager {
             helpModal.classList.remove('show');
             AudioSynth.playClick();
         });
-        
+
         // Minimize Game Over Modal
         const btnMinimize = document.getElementById('btnMinimizeGameOver');
         const gameOverModal = document.getElementById('gameOverModal');
@@ -402,7 +444,9 @@ class GameManager {
                 }
             });
         }
-        
+    }
+
+    initPanels() {
         // Minimize / Maximize Log Panel
         const btnMinimizeLog = document.getElementById('btnMinimizeLog');
         const btnMaximizeLog = document.getElementById('btnMaximizeLog');
@@ -439,7 +483,9 @@ class GameManager {
                 }
             });
         }
-        
+    }
+
+    initToggles() {
         // Sound toggle
         const btnSound = document.getElementById('btnSound');
         btnSound.addEventListener('click', () => {
@@ -573,10 +619,25 @@ class GameManager {
             document.addEventListener('mozfullscreenerror', onFSError);
             document.addEventListener('MSFullscreenError', onFSError);
         }
+    }
 
-        // Bet selector removed in point system
+    initOnlineActions() {
+        document.getElementById('btnCreateRoom').addEventListener('click', () => {
+            AudioSynth.playClick();
+            this.network.send({ type: 'CREATE_ROOM' });
+        });
 
-        // Event for clicking the stock pile
+        document.getElementById('btnJoinRoom').addEventListener('click', () => {
+            AudioSynth.playClick();
+            const roomId = document.getElementById('txtRoomId').value.trim();
+            if (roomId) {
+                this.network.send({ type: 'JOIN_ROOM', payload: { roomId } });
+            }
+        });
+    }
+
+    initGameActions() {
+         // Event for clicking the stock pile
         document.getElementById('drawPile').addEventListener('click', () => {
             const canDraw = (this.currentTurnIdx === 0 && !this.isReturningDiscards && this.turnStep === 'ACTION' && this.drawPile.length > 0);
             if (canDraw) {
@@ -584,7 +645,9 @@ class GameManager {
             }
         });
 
-        // Click outside to deselect card
+    }
+
+    initWindowEvents() {
         document.addEventListener('click', (e) => {
             const handContainer = document.getElementById('playerHand');
             const isClickInsideHand = handContainer && handContainer.contains(e.target);
@@ -3451,6 +3514,9 @@ function getBestPartitions(cards) {
 window.addEventListener('DOMContentLoaded', () => {
     AudioSynth.init();
     window.game = new GameManager();
+    // Connect to the server instead of starting the game directly
+    // Replace 'localhost' with your server's IP address if needed
+    window.game.network.connect('ws://localhost:8080');
 });
 
 // Auto-initialize audio on user gesture
