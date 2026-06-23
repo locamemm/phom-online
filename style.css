@@ -399,6 +399,30 @@ body {
     box-shadow: 2px 2px 0px rgba(0,0,0,0.4);
 }
 
+/* Add-bot small circular button overlay on avatar */
+.add-bot {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    color: #1a1a1a;
+    border: 2px solid var(--dark-border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    cursor: pointer;
+    pointer-events: auto;
+    font-size: 18px;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.4);
+}
+.player-avatar-container .add-bot {
+    right: -8px;
+    top: -8px;
+}
+.add-bot:hover { transform: scale(1.05); }
+
 .avatar.empty-seat {
     opacity: 0.45;
     color: #9a7b5a;

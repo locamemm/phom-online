@@ -578,7 +578,7 @@ class GameManager {
 
         // Event for clicking the stock pile
         document.getElementById('drawPile').addEventListener('click', () => {
-            const canDraw = (this.isMyTurn() && !this.isReturningDiscards && this.turnStep === 'ACTION' && this.drawPile.length > 0);
+            const canDraw = (this.currentTurnIdx === 0 && !this.isReturningDiscards && this.turnStep === 'ACTION' && this.drawPile.length > 0);
             if (canDraw) {
                 this.playerDraw();
             }
@@ -604,8 +604,6 @@ class GameManager {
         // Mat scaling for mobile devices
         window.addEventListener('resize', () => this.adjustMatScale());
         this.adjustMatScale();
-        // Setup online controls (Socket.IO) if present
-        try { this.setupOnlineControls(); } catch(e) { /* ignore if not available yet */ }
     }
 
     adjustMatScale() {
@@ -679,10 +677,8 @@ class GameManager {
     }
 
     createFloatingTextOnPlayer(playerIdx, text, isRed = false, isGreen = false) {
-        // playerIdx is server seat index; map to DOM index
-        const domIdx = this.serverSeatToDomIndex(playerIdx);
         // Find player avatar position in 2D
-        const playerZone = document.getElementById(`playerZone-${domIdx}`);
+        const playerZone = document.getElementById(`playerZone-${playerIdx}`);
         if (!playerZone) return;
         const rect = playerZone.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
@@ -691,8 +687,7 @@ class GameManager {
     }
 
     updateSingleAvatarForMeldPhase(playerIdx) {
-        const domIdx = this.serverSeatToDomIndex(playerIdx);
-        const zone = document.getElementById(`playerZone-${domIdx}`);
+        const zone = document.getElementById(`playerZone-${playerIdx}`);
         const avatarEl = (zone && typeof zone.querySelector === 'function') ? zone.querySelector('.avatar') : null;
         if (avatarEl) {
             let order = (playerIdx - this.meldStartIdx) * this.playDirection;
@@ -703,12 +698,11 @@ class GameManager {
 
     restoreOriginalAvatars() {
         const originalLabels = ["Ta", "LH", "B3", "CH"];
-        for (let serverSeat = 0; serverSeat < 4; serverSeat++) {
-            const domIdx = this.serverSeatToDomIndex(serverSeat);
-            const zone = document.getElementById(`playerZone-${domIdx}`);
+        for (let i = 0; i < 4; i++) {
+            const zone = document.getElementById(`playerZone-${i}`);
             const avatarEl = (zone && typeof zone.querySelector === 'function') ? zone.querySelector('.avatar') : null;
             if (avatarEl) {
-                avatarEl.textContent = originalLabels[serverSeat];
+                avatarEl.textContent = originalLabels[i];
             }
         }
     }
@@ -778,50 +772,6 @@ class GameManager {
         this.resetGame();
     }
 
-    isMyTurn() {
-        if (!this.online) return this.currentTurnIdx === 0;
-        if (this.seatIdx === null || this.seatIdx === undefined) return false;
-        return this.currentTurnIdx === this.seatIdx;
-    }
-
-    // --- Seating mapping helpers ---
-    // UI positions (conceptual) ordered clockwise as requested by spec:
-    // 0: SOUTH (bottom), 1: WEST (left), 2: NORTH (top), 3: EAST (right)
-    serverSeatToUiPos(serverSeat) {
-        // mySeat is the server seat index where this client sits
-        const mySeat = (this.seatIdx === null || this.seatIdx === undefined) ? 0 : this.seatIdx;
-        return ((serverSeat - mySeat) + 4) % 4;
-    }
-
-    // Map UI pos -> DOM index used in HTML: DOM indices are [0:SOUTH,1:EAST,2:NORTH,3:WEST]
-    // We need to convert UI pos(0:SOUTH,1:WEST,2:NORTH,3:EAST) -> DOM index
-    uiPosToDomIndex(uiPos) {
-        // mapping: ui 0->dom0, ui1(WEST)->dom3, ui2->dom2, ui3(EAST)->dom1
-        const map = [0, 3, 2, 1];
-        return map[uiPos % 4];
-    }
-
-    serverSeatToDomIndex(serverSeat) {
-        const ui = this.serverSeatToUiPos(serverSeat);
-        return this.uiPosToDomIndex(ui);
-    }
-
-    domIndexToUiPos(domIdx) {
-        // inverse of uiPosToDomIndex - map dom->ui
-        const inv = [0, 3, 2, 1].map((v,i)=>{return {dom:v, ui:i};}).sort((a,b)=>a.dom-b.dom);
-        return inv[domIdx].ui;
-    }
-
-    uiPosToServerSeat(uiPos) {
-        const mySeat = (this.seatIdx === null || this.seatIdx === undefined) ? 0 : this.seatIdx;
-        return (uiPos + mySeat) % 4;
-    }
-
-    domIndexToServerSeat(domIdx) {
-        const ui = this.domIndexToUiPos(domIdx);
-        return this.uiPosToServerSeat(ui);
-    }
-
     initializeDeck() {
         this.deck = [];
         for (let s = 0; s < 4; s++) {
@@ -869,7 +819,7 @@ class GameManager {
                 this.renderAll();
                 
                 // Start game flow
-                if (this.isMyTurn()) {
+                if (this.currentTurnIdx === 0) {
                     this.turnStep = 'DISCARD'; // Dealer starts with 10 cards, so they discard immediately
                     this.logMessage(`Bạn chia được 10 lá bài. Hãy chọn 1 lá rác để Đánh!`, 'player');
                     this.updateHUD();
@@ -903,11 +853,10 @@ class GameManager {
             let targetCardEl = null;
             let showFront = (playerIdx === 0);
             
-            if (playerIdx === 0 && !this.online) {
+            if (playerIdx === 0) {
                 targetCardEl = document.getElementById(card.id);
             } else {
-                const domIdx = this.online ? this.serverSeatToDomIndex(playerIdx) : playerIdx;
-                const container = document.getElementById('hand-' + domIdx);
+                const container = document.getElementById('hand-' + playerIdx);
                 targetCardEl = container ? container.lastElementChild : null;
             }
 
@@ -933,16 +882,17 @@ class GameManager {
     clearTableDOM() {
         document.getElementById('discardArea').innerHTML = '';
         document.getElementById('playerHand').innerHTML = '';
-        for (let dom = 1; dom <= 3; dom++) {
-            const handEl = document.getElementById('hand-' + dom);
-            if (handEl) handEl.innerHTML = '';
-        }
-        for (let dom = 0; dom <= 3; dom++) {
-            const eatenEl = document.getElementById('eaten-' + dom);
-            if (eatenEl) eatenEl.innerHTML = '';
-            const meldEl = document.getElementById('melds-' + dom);
-            if (meldEl) meldEl.innerHTML = '';
-        }
+        document.getElementById('hand-1').innerHTML = '';
+        document.getElementById('hand-2').innerHTML = '';
+        document.getElementById('hand-3').innerHTML = '';
+        document.getElementById('eaten-0').innerHTML = '';
+        document.getElementById('eaten-1').innerHTML = '';
+        document.getElementById('eaten-2').innerHTML = '';
+        document.getElementById('eaten-3').innerHTML = '';
+        document.getElementById('melds-0').innerHTML = '';
+        document.getElementById('melds-1').innerHTML = '';
+        document.getElementById('melds-2').innerHTML = '';
+        document.getElementById('melds-3').innerHTML = '';
     }
 
     sortHand(playerIdx) {
@@ -1041,8 +991,7 @@ class GameManager {
     renderPlayerHand() {
         const container = document.getElementById('playerHand');
         container.innerHTML = '';
-        const mySeat = this.online ? this.seatIdx : 0;
-        const hand = (this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : [];
+        const hand = this.players[0].hand;
         const total = hand.length;
         
         hand.forEach((card, idx) => {
@@ -1068,7 +1017,7 @@ class GameManager {
             cardEl.addEventListener('click', (e) => {
                 e.stopPropagation(); // Prevent document click listener from deselecting
                 let isSwapBlocked = false;
-                if (this.isMyTurn() && this.turnStep === 'ACTION' && this.lastDiscardedCard && this.canEatCard(mySeat, this.lastDiscardedCard)) {
+                if (this.currentTurnIdx === 0 && this.turnStep === 'ACTION' && this.lastDiscardedCard && this.canEatCard(0, this.lastDiscardedCard)) {
                     isSwapBlocked = true;
                 }
 
@@ -1081,7 +1030,7 @@ class GameManager {
                         this.selectedCardId = null;
                     } else {
                         // Insert the first selected card to the right of the second card
-                        let hand = (this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : [];
+                        let hand = this.players[0].hand;
                         let idxA = hand.findIndex(c => c.id === this.selectedCardId);
                         let idxB = hand.findIndex(c => c.id === card.id);
                         if (idxA !== -1 && idxB !== -1) {
@@ -1096,32 +1045,32 @@ class GameManager {
                     this.updateHUD();
                 } else {
                     // Swapping is blocked
-                            if (this.isMyTurn()) {
-                                if (this.turnStep === 'DISCARD') {
-                                    AudioSynth.playClick();
-                                    if (this.selectedCardId === card.id) {
-                                        this.selectedCardId = null;
-                                    } else {
-                                        this.selectedCardId = card.id;
-                                    }
-                                    this.renderPlayerHand();
-                                    this.updateHUD();
-                                } else if (this.turnStep === 'ACTION') {
-                                    AudioSynth.playClick();
-                                    if (this.selectedEatCardIds.includes(card.id)) {
-                                        this.selectedEatCardIds = this.selectedEatCardIds.filter(id => id !== card.id);
-                                    } else {
-                                        if (this.selectedEatCardIds.length < 3) {
-                                            this.selectedEatCardIds.push(card.id);
-                                        } else {
-                                            this.selectedEatCardIds.shift();
-                                            this.selectedEatCardIds.push(card.id);
-                                        }
-                                    }
-                                    this.renderPlayerHand();
-                                    this.updateHUD();
+                    if (this.currentTurnIdx === 0) {
+                        if (this.turnStep === 'DISCARD') {
+                            AudioSynth.playClick();
+                            if (this.selectedCardId === card.id) {
+                                this.selectedCardId = null;
+                            } else {
+                                this.selectedCardId = card.id;
+                            }
+                            this.renderPlayerHand();
+                            this.updateHUD();
+                        } else if (this.turnStep === 'ACTION') {
+                            AudioSynth.playClick();
+                            if (this.selectedEatCardIds.includes(card.id)) {
+                                this.selectedEatCardIds = this.selectedEatCardIds.filter(id => id !== card.id);
+                            } else {
+                                if (this.selectedEatCardIds.length < 3) {
+                                    this.selectedEatCardIds.push(card.id);
+                                } else {
+                                    this.selectedEatCardIds.shift();
+                                    this.selectedEatCardIds.push(card.id);
                                 }
                             }
+                            this.renderPlayerHand();
+                            this.updateHUD();
+                        }
+                    }
                 }
             });
 
@@ -1131,40 +1080,54 @@ class GameManager {
 
     renderAIHands() {
         const showFront = this.hasStartedDọnRác || (this.turnStep === 'GAME_OVER');
-        // Render hands for DOM positions 1..3 (excluding SOUTH at DOM 0)
-        for (let domIdx = 1; domIdx <= 3; domIdx++) {
-            const serverSeat = this.domIndexToServerSeat(domIdx);
-            const container = document.getElementById('hand-' + domIdx);
-            if (!container) continue;
-            container.innerHTML = '';
-            const hand = (this.players[serverSeat] && this.players[serverSeat].hand) ? this.players[serverSeat].hand : [];
-            const count = hand.length;
-            // Layout based on DOM position: dom 1 (EAST/right) and dom 3 (LEFT) -> vertical, dom 2 (TOP) -> horizontal
-            const isVertical = (domIdx === 1 || domIdx === 3);
-            hand.forEach((card, i) => {
-                let el = this.createCardElement(card, showFront);
-                let offset = (i - (count - 1)/2) * 24;
-                if (isVertical) el.style.transform = `translateY(${offset}px)`;
-                else el.style.transform = `translateX(${offset}px)`;
-                container.appendChild(el);
-            });
-        }
+        
+        // East AI (Player 1) - Stacked vertically
+        const container1 = document.getElementById('hand-1');
+        container1.innerHTML = '';
+        let count1 = this.players[1].hand.length;
+        this.players[1].hand.forEach((card, i) => {
+            let el = this.createCardElement(card, showFront);
+            let offset = (i - (count1 - 1)/2) * 24;
+            el.style.transform = `translateY(${offset}px)`;
+            container1.appendChild(el);
+        });
+
+        // North AI (Player 2) - Stacked horizontally
+        const container2 = document.getElementById('hand-2');
+        container2.innerHTML = '';
+        let count2 = this.players[2].hand.length;
+        this.players[2].hand.forEach((card, i) => {
+            let el = this.createCardElement(card, showFront);
+            let offset = (i - (count2 - 1)/2) * 24;
+            el.style.transform = `translateX(${offset}px)`;
+            container2.appendChild(el);
+        });
+
+        // West AI (Player 3) - Stacked vertically
+        const container3 = document.getElementById('hand-3');
+        container3.innerHTML = '';
+        let count3 = this.players[3].hand.length;
+        this.players[3].hand.forEach((card, i) => {
+            let el = this.createCardElement(card, showFront);
+            let offset = (i - (count3 - 1)/2) * 24;
+            el.style.transform = `translateY(${offset}px)`;
+            container3.appendChild(el);
+        });
     }
 
     renderDiscardArea() {
         const container = document.getElementById('discardArea');
         container.innerHTML = '';
+
         this.tableDiscards.forEach((slotCards, slotIdx) => {
             slotCards.forEach((card, pileIdx) => {
                 const cardEl = this.createCardElement(card, true);
                 let x = 0, y = 0, rot = 0;
-                // Map server slot to DOM visual index
-                let domIdx = this.serverSeatToDomIndex(slotIdx);
-                let visualIdx = domIdx;
+                let visualIdx = slotIdx;
                 if (this.playDirection === -1) {
-                    visualIdx = (domIdx - 2 + 4) % 4;
+                    visualIdx = (slotIdx - 2 + 4) % 4;
                 }
-
+                
                 if (visualIdx === 0) { // Bottom plays to Right
                     x = 422 + (this.baseWidth - 760) - Math.abs(pileIdx - 1.5) * 12;
                     y = 220 + (this.baseHeight - 520) + pileIdx * 32;
@@ -1185,7 +1148,7 @@ class GameManager {
 
                 cardEl.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
                 cardEl.style.zIndex = pileIdx + 1;
-
+                
                 if (card === this.lastDiscardedCard) {
                     cardEl.style.boxShadow = '0px 0px 0px 3px #ffcc00, 4px 4px 0px rgba(0,0,0,0.4)';
                 }
@@ -1200,9 +1163,8 @@ class GameManager {
     }
 
     renderMelds() {
-        this.players.forEach((p, serverSeat) => {
-            const domIdx = this.serverSeatToDomIndex(serverSeat);
-            const container = document.getElementById(`melds-${domIdx}`);
+        this.players.forEach((p, idx) => {
+            const container = document.getElementById(`melds-${idx}`);
             if (!container) return;
             container.innerHTML = '';
             
@@ -1307,7 +1269,7 @@ class GameManager {
                     groupDiv.appendChild(cardEl);
                 });
                 
-                if (serverSeat === this.seatIdx) {
+                if (idx === 0) {
                     groupDiv.style.pointerEvents = 'auto';
                     groupDiv.style.cursor = 'pointer';
                     
@@ -1369,25 +1331,29 @@ class GameManager {
     // --- GAME INTERACTION CONTROLS ---
 
     updateHUD() {
-        // Toggle player turn and dealer indicators (map server seats -> DOM)
-        for (let serverSeat = 0; serverSeat < 4; serverSeat++) {
-            const domIdx = this.serverSeatToDomIndex(serverSeat);
-            const zone = document.getElementById(`playerZone-${domIdx}`);
-            const balanceEl = document.getElementById(`balance-${domIdx}`);
-            const playerObj = this.players[serverSeat] || { matchEatPoints: 0, matchPlacementPoints: 0 };
-
-            let currentPoints = (playerObj.matchEatPoints || 0) + (playerObj.matchPlacementPoints || 0);
-            if (balanceEl) balanceEl.textContent = `${currentPoints > 0 ? '+' : ''}${currentPoints} Điểm`;
-
-            if (this.dealerIdx === serverSeat) {
-                if (zone) zone.classList.add('is-dealer');
+        // Toggle player turn and dealer indicators
+        for (let i = 0; i < 4; i++) {
+            const zone = document.getElementById(`playerZone-${i}`);
+            const balanceEl = document.getElementById(`balance-${i}`);
+            
+            let currentPoints = this.players[i].matchEatPoints + this.players[i].matchPlacementPoints;
+            balanceEl.textContent = `${currentPoints > 0 ? '+' : ''}${currentPoints} Điểm`;
+            
+            if (this.currentTurnIdx === i) {
+                zone.classList.add('active');
             } else {
-                if (zone) zone.classList.remove('is-dealer');
+                zone.classList.remove('active');
+            }
+
+            if (this.dealerIdx === i) {
+                zone.classList.add('is-dealer');
+            } else {
+                zone.classList.remove('is-dealer');
             }
         }
-        // Active state of buttons for User (player at our seat)
-        const mySeat = this.online ? this.seatIdx : 0;
-        const isUserTurn = this.isMyTurn();
+
+        // Active state of buttons for User (player 0)
+        const isUserTurn = (this.currentTurnIdx === 0);
         const btnEat = document.getElementById('btnEat');
         const btnDiscard = document.getElementById('btnDiscard');
         const btnLayMelds = document.getElementById('btnLayMelds');
@@ -1400,9 +1366,9 @@ class GameManager {
         if (isUserTurn && !this.isReturningDiscards) {
             if (this.turnStep === 'ACTION') {
                 // Can user eat the last discarded card?
-                if (this.lastDiscardedCard && this.lastDiscardedPlayerIdx !== mySeat) {
+                if (this.lastDiscardedCard && this.lastDiscardedPlayerIdx !== 0) {
                     if (this.selectedEatCardIds && (this.selectedEatCardIds.length === 2 || this.selectedEatCardIds.length === 3)) {
-                        let selectedCards = this.selectedEatCardIds.map(id => (this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand.find(c => c.id === id) : null);
+                        let selectedCards = this.selectedEatCardIds.map(id => this.players[0].hand.find(c => c.id === id));
                         if (this.isValidPhom(...selectedCards, this.lastDiscardedCard)) {
                             btnEat.disabled = false;
                         }
@@ -1414,7 +1380,7 @@ class GameManager {
                     if (btnDiscard) btnDiscard.disabled = false;
                 }
                 // Check if user is eligible to U (0 or 1 rubbish card remaining in their 10-card hand)
-                let partition = getBestPartitions((this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : []);
+                let partition = getBestPartitions(this.players[0].hand);
                 if (partition.racs.length <= 1) {
                     if (btnLayMelds) btnLayMelds.disabled = false;
                 }
@@ -1426,7 +1392,7 @@ class GameManager {
         // Toggle U highlight class on btnLayMelds
         let isEligibleU = false;
         if (isUserTurn && !this.isReturningDiscards && this.turnStep === 'DISCARD') {
-            let partition = getBestPartitions((this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : []);
+            let partition = getBestPartitions(this.players[0].hand);
             if (partition.racs.length <= 1) {
                 isEligibleU = true;
             }
@@ -1595,271 +1561,13 @@ class GameManager {
         }
     }
 
-    // --- ONLINE / SOCKET.IO SUPPORT ---
-    setupOnlineControls() {
-        this.online = false;
-        this.socket = null;
-        this.roomId = null;
-        this.seatIdx = null;
-
-        const btnCreate = document.getElementById('btnCreateRoom');
-        const btnJoin = document.getElementById('btnJoinRoom');
-        const btnStart = document.getElementById('btnStartOnline');
-        const nameInput = document.getElementById('playerName');
-        const roomInput = document.getElementById('roomIdInput');
-        const roomStatus = document.getElementById('roomStatus');
-
-        const ensureSocket = () => {
-            if (!this.socket) {
-                if (typeof io === 'undefined') {
-                    this.logMessage('Socket.IO client not found. Chạy server và mở trang qua http://localhost:3000', 'system');
-                    return null;
-                }
-                this.socket = io();
-
-                this.socket.on('roomUpdate', (data) => {
-                    const players = data.players || [];
-                    const occupiedNames = players.map(p=> p ? p.name : null).filter(Boolean);
-                    roomStatus.textContent = `Phòng: ${this.roomId || ''} — Người: ${occupiedNames.join(', ')}`;
-                    // update seat UI for 4 seats (map server seats -> DOM positions)
-                    for (let serverSeat = 0; serverSeat < 4; serverSeat++) {
-                        const domIdx = this.serverSeatToDomIndex(serverSeat);
-                        const zone = document.getElementById(`playerZone-${domIdx}`);
-                        if (!zone) continue;
-                        const nameEl = zone.querySelector('.player-name');
-                        const avatarEl = zone.querySelector('.avatar');
-                        if (players[serverSeat]) {
-                            nameEl.textContent = players[serverSeat].name;
-                            avatarEl.classList.remove('empty-seat');
-                            // short initials
-                            const initials = players[serverSeat].name.split(' ').map(s=>s[0]).join('').slice(0,2).toUpperCase();
-                            avatarEl.textContent = initials || `P${serverSeat}`;
-                        } else {
-                            nameEl.textContent = 'Trống';
-                            avatarEl.classList.add('empty-seat');
-                            avatarEl.textContent = '—';
-                        }
-                    }
-                });
-
-                this.socket.on('dealHands', (data) => {
-                    // data: {hand, seatIdx, dealerIdx, players}
-                    this.online = true;
-                    this.roomId = this.roomId || roomInput.value;
-                    this.seatIdx = data.seatIdx;
-                    // initialize players array as 4 seats
-                    this.players = [];
-                    for (let i = 0; i < 4; i++) {
-                        const pname = (data.players && data.players[i]) ? data.players[i].name : null;
-                        const isMe = (i === this.seatIdx);
-                        this.players.push(new Player(i, pname || (`P${i}`), 0, !isMe));
-                        if (isMe) {
-                            this.players[i].hand = data.hand.map(c => new Card(c.suit, c.rankIndex));
-                        } else {
-                            this.players[i].hand = [];
-                        }
-                    }
-                    this.dealerIdx = data.dealerIdx;
-                    this.currentTurnIdx = data.dealerIdx;
-                    this.drawPile = this.drawPile || [];
-                    // animate dealing similar to local game
-                    this.turnStep = 'DEALING';
-                    this.renderAll();
-                    this.logMessage('Đang nhận bài từ server...', 'system');
-
-                    // Build occupied seats list from players array (may contain nulls)
-                    const playersArray = data.players || [];
-                    const occupiedSeats = [];
-                    for (let i = 0; i < 4; i++) if (playersArray[i]) occupiedSeats.push(i);
-                    // create deal order starting from dealerIdx
-                    const dealOrder = [];
-                    let counts = {};
-                    occupiedSeats.forEach(s => counts[s] = 0);
-                    const cardsToDeal = occupiedSeats.length * 9 + 1;
-                    let curr = data.dealerIdx;
-                    const nextOcc = (seat) => {
-                        const idx = occupiedSeats.indexOf(seat);
-                        return occupiedSeats[(idx + 1) % occupiedSeats.length];
-                    };
-                    while (Object.values(counts).reduce((a,b)=>a+b,0) < cardsToDeal) {
-                        const limit = (curr === data.dealerIdx) ? 10 : 9;
-                        if (counts[curr] < limit) { dealOrder.push(curr); counts[curr]++; }
-                        curr = nextOcc(curr);
-                    }
-
-                    // We'll animate cards flying in order. For cards belonging to us, use actual card data; others show backs.
-                    let myHandQueue = Array.isArray(data.hand) ? data.hand.slice() : [];
-                    let dealIndex = 0;
-                    const animateNext = () => {
-                        if (dealIndex >= dealOrder.length) {
-                            // finish
-                            this.turnStep = (this.isMyTurn()) ? 'DISCARD' : 'ACTION';
-                            this.logMessage('Đã chia xong. Trận đấu bắt đầu (online).', 'system');
-                            this.renderAll();
-                            this.updateHUD();
-                            return;
-                        }
-                        const seat = dealOrder[dealIndex];
-                        // create a card object
-                        let cardObj = null;
-                        let showFront = false;
-                        if (seat === this.seatIdx && myHandQueue.length > 0) {
-                            const c = myHandQueue.shift();
-                            cardObj = new Card(c.suit, c.rankIndex);
-                            showFront = true;
-                        } else {
-                            // placeholder back card
-                            cardObj = { id: `back-${seat}-${dealIndex}`, suit: 0, rankIndex: 0 };
-                            showFront = false;
-                        }
-                        // push into players model
-                        if (!this.players[seat]) this.players[seat] = new Player(seat, (playersArray[seat] && playersArray[seat].name) ? playersArray[seat].name : `P${seat}`, 0, seat !== this.seatIdx);
-                        if (!this.players[seat].hand) this.players[seat].hand = [];
-                        this.players[seat].hand.push(cardObj);
-                        // render and animate
-                        this.renderDrawPile();
-                        if (seat === this.seatIdx) this.sortHand(this.seatIdx);
-                        this.renderAll();
-
-                        const drawPileEl = document.getElementById('drawPile');
-                        const startRect = drawPileEl ? drawPileEl.getBoundingClientRect() : { left: window.innerWidth/2, top: window.innerHeight/2, width: 64, height: 88 };
-                        let targetEl = null;
-                        if (seat === this.seatIdx) {
-                            targetEl = document.getElementById(cardObj.id);
-                        } else {
-                            const domIdx = this.serverSeatToDomIndex(seat);
-                            const container = document.getElementById('hand-' + domIdx);
-                            targetEl = container ? container.lastElementChild : null;
-                        }
-                        if (targetEl) {
-                            targetEl.style.opacity = '0';
-                            const endRect = targetEl.getBoundingClientRect();
-                            AudioSynth.playSwoosh();
-                            this.animateCardFlying(cardObj, startRect, endRect, showFront, () => {
-                                targetEl.style.opacity = '1';
-                                AudioSynth.playClick();
-                                this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, showFront ? '#dfb76c' : '#1a1a1a');
-                            });
-                        }
-                        dealIndex++;
-                        setTimeout(animateNext, 90);
-                    };
-                    animateNext();
-                });
-
-                this.socket.on('handUpdate', (data) => {
-                    if (this.seatIdx !== null) {
-                        this.players[this.seatIdx].hand = data.hand.map(c => new Card(c.suit, c.rankIndex));
-                        this.renderPlayerHand();
-                    }
-                });
-
-                this.socket.on('stateUpdate', (data) => {
-                    // Public info: drawPileCount, tableDiscards, currentTurnIdx, lastDiscardedCard, playersHandsCounts
-                    if (data.drawPileCount !== undefined) {
-                        // We cannot know exact cards in drawPile (server keeps), but update count
-                        this.drawPile = new Array(data.drawPileCount);
-                    }
-                    if (data.tableDiscards) {
-                        // convert to Card objects for rendering where possible
-                        // tableDiscards is seat-indexed array length 4
-                        this.tableDiscards = data.tableDiscards.map(arr => (arr || []).map(c => new Card(c.suit, c.rankIndex)));
-                    }
-                    if (data.playersHandsCounts) {
-                        // For each seat, create placeholder back-cards to show counts (except our own real hand)
-                        data.playersHandsCounts.forEach((count, idx) => {
-                            if (idx === this.seatIdx) return; // skip our hand
-                            const arr = [];
-                            for (let k = 0; k < count; k++) {
-                                arr.push({ id: `back-${idx}-${k}`, cssClass: 'card-back', symbol: '', suitSymbol: '' });
-                            }
-                            if (!this.players[idx]) this.players[idx] = new Player(idx, `P${idx}`, 0, true);
-                            this.players[idx].hand = arr;
-                        });
-                    }
-                    if (data.currentTurnSeatIdx !== undefined) this.currentTurnIdx = data.currentTurnSeatIdx;
-                    else if (data.currentTurnIdx !== undefined) this.currentTurnIdx = data.currentTurnIdx;
-                    if (data.lastDiscardedCard) {
-                        this.lastDiscardedCard = new Card(data.lastDiscardedCard.suit, data.lastDiscardedCard.rankIndex);
-                        // find which player it belongs to by searching tableDiscards
-                        this.lastDiscardedPlayerIdx = (this.tableDiscards || []).findIndex(slot => slot.find(c => c.id === this.lastDiscardedCard.id) !== undefined);
-                    }
-                    this.renderAll();
-                    this.updateHUD();
-                });
-
-                this.socket.on('connect_error', (err) => {
-                    this.logMessage('Không thể kết nối tới server: ' + err.message, 'system');
-                });
-            }
-            return this.socket;
-        };
-
-        if (btnCreate) btnCreate.addEventListener('click', () => {
-            const sock = ensureSocket();
-            if (!sock) return;
-            const name = nameInput.value || 'Bạn';
-            const roomId = roomInput.value || undefined;
-            // request to sit at South (seat 0) when creating
-            sock.emit('createRoom', {roomId, name, preferredSeat: 0}, (res) => {
-                if (res && res.roomId) {
-                    this.roomId = res.roomId;
-                    if (res.seatIdx !== undefined) this.seatIdx = res.seatIdx;
-                    roomStatus.textContent = `Tạo phòng: ${this.roomId}`;
-                    this.logMessage(`Bạn là chỗ ngồi #${this.seatIdx}`, 'system');
-                }
-            });
-        });
-
-        if (btnJoin) btnJoin.addEventListener('click', () => {
-            const sock = ensureSocket();
-            if (!sock) return;
-            const name = nameInput.value || 'Bạn';
-            const roomId = roomInput.value;
-            if (!roomId) { this.logMessage('Vui lòng nhập mã phòng để tham gia.', 'system'); return; }
-            sock.emit('joinRoom', {roomId, name}, (res) => {
-                if (res && res.error) {
-                    this.logMessage(res.error, 'system');
-                } else {
-                    this.roomId = roomId;
-                    if (res && res.seatIdx !== undefined) this.seatIdx = res.seatIdx;
-                    roomStatus.textContent = `Đã tham gia: ${this.roomId}`;
-                    this.logMessage(`Bạn đã vào phòng. Chỗ ngồi: #${this.seatIdx}`, 'system');
-                }
-            });
-        });
-
-        if (btnStart) btnStart.addEventListener('click', () => {
-            const sock = ensureSocket();
-            if (!sock) return;
-            if (!this.roomId) { this.logMessage('Chưa có phòng (tạo hoặc tham gia trước).', 'system'); return; }
-            sock.emit('startGame', {roomId: this.roomId}, (res) => {
-                if (res && res.error) this.logMessage(res.error, 'system');
-            });
-        });
-    }
-
     // --- TURN ACTIONS ---
 
     playerDraw() {
         if (this.currentTurnIdx !== 0 || this.turnStep !== 'ACTION') return;
         if (this.isDrawingOrEating) return;
         this.isDrawingOrEating = true;
-
-        // If playing online, ask server to draw
-        if (this.online && this.socket && this.roomId && this.seatIdx !== null) {
-            this.socket.emit('playerDraw', { roomId: this.roomId, seatIdx: this.seatIdx }, (res) => {
-                if (res && res.error) {
-                    this.logMessage(res.error, 'system');
-                    this.isDrawingOrEating = false;
-                } else {
-                    // server will emit handUpdate/stateUpdate
-                    this.isDrawingOrEating = false;
-                }
-            });
-            return;
-        }
-
+        
         if (this.drawPile.length === 0) {
             this.logMessage(`Nọc đã hết bài. Bắt đầu hạ phỏm!`, 'system');
             this.startMeldPhase();
@@ -1875,9 +1583,7 @@ class GameManager {
 
         AudioSynth.playSwoosh();
         let card = this.drawPile.pop();
-        const mySeat = this.online ? this.seatIdx : 0;
-        if (!this.players[mySeat]) this.players[mySeat] = new Player(mySeat, `P${mySeat}`, 0, false);
-        this.players[mySeat].addCard(card);
+        this.players[0].addCard(card);
         this.logMessage(`Bạn đã bốc 1 lá bài từ Nọc.`, 'player');
         
         this.renderDrawPile();
@@ -1907,8 +1613,7 @@ class GameManager {
     }
 
     playerEat() {
-        const mySeat = this.online ? this.seatIdx : 0;
-        if (this.currentTurnIdx !== mySeat || this.turnStep !== 'ACTION') return;
+        if (this.currentTurnIdx !== 0 || this.turnStep !== 'ACTION') return;
         if (this.isDrawingOrEating) return;
         this.isDrawingOrEating = true;
         
@@ -1918,15 +1623,15 @@ class GameManager {
         }
 
         if (this.selectedEatCardIds.length < 2 || this.selectedEatCardIds.length > 3) {
-            this.showStatusBubble(mySeat, "Chọn 2 hoặc 3 lá cạ trên tay!", 2000);
+            this.showStatusBubble(0, "Chọn 2 hoặc 3 lá cạ trên tay!", 2000);
             this.isDrawingOrEating = false;
             return;
         }
 
-        let selectedCards = this.selectedEatCardIds.map(id => (this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand.find(c => c.id === id) : null);
+        let selectedCards = this.selectedEatCardIds.map(id => this.players[0].hand.find(c => c.id === id));
 
         if (!this.isValidPhom(...selectedCards, this.lastDiscardedCard)) {
-            this.showStatusBubble(mySeat, "Cạ chọn không hợp lệ!", 2000);
+            this.showStatusBubble(0, "Cạ chọn không hợp lệ!", 2000);
             this.isDrawingOrEating = false;
             return;
         }
@@ -1951,15 +1656,14 @@ class GameManager {
         
         let eatenCard = this.lastDiscardedCard;
         // Remove the selected Cạ cards from hand
-        selectedCards.forEach(c => { if (this.players[mySeat]) this.players[mySeat].removeCard(c.id); });
+        selectedCards.forEach(c => this.players[0].removeCard(c.id));
 
         // Add to eaten
         let eatenPhom = [eatenCard, ...selectedCards];
-        if (!this.players[mySeat].eaten) this.players[mySeat].eaten = [];
-        this.players[mySeat].eaten.push(eatenPhom);
+        this.players[0].eaten.push(eatenPhom);
         
         this.logMessage(`Bạn đã ăn lá ${eatenCard.name} từ ${sourcePlayer.name}!`, 'player');
-        this.showStatusBubble(mySeat, "Ăn bài!", 1500);
+        this.showStatusBubble(0, "Ăn bài!", 1500);
 
         this.selectedEatCardIds = []; // Clear eat selections
         this.selectedCardId = null; // Clear discard selection immediately
@@ -1979,12 +1683,12 @@ class GameManager {
                 AudioSynth.playClick();
                 this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, '#5cff9f');
                 
-                        this.lastDiscardedCard = null;
-                        this.lastDiscardedPlayerIdx = -1;
-                        this.selectedCardId = null;
-                        this.turnStep = 'DISCARD';
-                        this.isDrawingOrEating = false;
-                        this.updateHUD();
+                this.lastDiscardedCard = null;
+                this.lastDiscardedPlayerIdx = -1;
+                this.selectedCardId = null;
+                this.turnStep = 'DISCARD';
+                this.isDrawingOrEating = false;
+                this.updateHUD();
             });
         } else {
             this.lastDiscardedCard = null;
@@ -1997,32 +1701,21 @@ class GameManager {
     }
 
     playerDiscard() {
-        if (!this.isMyTurn() || this.turnStep !== 'DISCARD') return;
+        if (this.currentTurnIdx !== 0 || this.turnStep !== 'DISCARD') return;
         if (!this.selectedCardId) return;
 
         const cardEl = document.getElementById(this.selectedCardId);
         const startRect = cardEl ? cardEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
-        const mySeat = this.online ? this.seatIdx : 0;
-        // If online, emit discard to server and let it update state
-        if (this.online && this.socket && this.roomId && this.seatIdx !== null) {
-            const cardObj = (this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand.find(c => c.id === this.selectedCardId) : null;
-            if (!cardObj) return;
-            AudioSynth.playClick();
-            this.socket.emit('playerDiscard', { roomId: this.roomId, seatIdx: this.seatIdx, card: { id: cardObj.id } }, (res) => {
-                if (res && res.error) this.logMessage(res.error, 'system');
-            });
-            return;
-        }
 
         AudioSynth.playClick();
         
         // Find card
-        let card = (this.players[mySeat]) ? this.players[mySeat].removeCard(this.selectedCardId) : null;
+        let card = this.players[0].removeCard(this.selectedCardId);
         if (card) {
-            this.tableDiscards[mySeat].push(card);
-            if (this.players[mySeat]) this.players[mySeat].discardCount++;
+            this.tableDiscards[0].push(card);
+            this.players[0].discardCount++;
             this.lastDiscardedCard = card;
-            this.lastDiscardedPlayerIdx = mySeat;
+            this.lastDiscardedPlayerIdx = 0;
             this.logMessage(`Bạn đã đánh lá ${card.name}.`, 'player');
             
             this.selectedCardId = null;
@@ -2041,13 +1734,12 @@ class GameManager {
                     this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, '#ff5c5c');
                     
                     // Check for instant win (Ù) after discard?
-                    const mySeat2 = this.online ? this.seatIdx : 0;
-                    let checkU = getBestPartitions((this.players[mySeat2] && this.players[mySeat2].hand) ? this.players[mySeat2].hand : []);
+                    let checkU = getBestPartitions(this.players[0].hand);
                     if (checkU.racs.length === 0) {
-                        if (this.players[mySeat2]) this.players[mySeat2].isU = true;
+                        this.players[0].isU = true;
                         this.logMessage(`Bạn đã Ù!`, 'win');
-                        this.showStatusBubble(mySeat2, "Ù!!! 🎉", 3000);
-                        this.animateULayMelds(mySeat2, () => {
+                        this.showStatusBubble(0, "Ù!!! 🎉", 3000);
+                        this.animateULayMelds(0, () => {
                             this.endGame();
                         });
                         return;
@@ -2063,15 +1755,14 @@ class GameManager {
     }
 
     playerLayMelds() {
-        const mySeat = this.online ? this.seatIdx : 0;
-        if (this.currentTurnIdx !== mySeat) return;
+        if (this.currentTurnIdx !== 0) return;
         
         // If player clicks "Hạ phỏm" during DISCARD turn step to U
         if (this.turnStep === 'DISCARD') {
-            let partition = getBestPartitions((this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : []);
+            let partition = getBestPartitions(this.players[0].hand);
             if (partition.racs.length <= 1) {
                 // Yes, they can U!
-                if (this.players[mySeat]) this.players[mySeat].isU = true;
+                this.players[0].isU = true;
                 
                 let rubbishCard = null;
                 let startRect = null;
@@ -2081,19 +1772,18 @@ class GameManager {
                     startRect = cardEl ? cardEl.getBoundingClientRect() : null;
                     
                     // Modify data model for discard
-                    if (this.players[mySeat]) this.players[mySeat].removeCard(rubbishCard.id);
-                    if (!this.tableDiscards[mySeat]) this.tableDiscards[mySeat] = [];
-                    this.tableDiscards[mySeat].push(rubbishCard);
-                    if (this.players[mySeat]) this.players[mySeat].discardCount++;
+                    this.players[0].removeCard(rubbishCard.id);
+                    this.tableDiscards[0].push(rubbishCard);
+                    this.players[0].discardCount++;
                     this.lastDiscardedCard = rubbishCard;
-                    this.lastDiscardedPlayerIdx = mySeat;
+                    this.lastDiscardedPlayerIdx = 0;
                     this.logMessage(`Bạn đã đánh lá ${rubbishCard.name} và Ù!`, 'player');
                 } else {
                     this.logMessage(`Bạn đã Ù (Ù khan)!`, 'player');
                 }
                 
-                this.logMessage(`${this.players[mySeat] ? this.players[mySeat].name : 'Bạn'} đã Ù!`, 'alert');
-                this.showStatusBubble(mySeat, "Ù! 🎉", 3000);
+                this.logMessage(`${this.players[0].name} đã Ù!`, 'alert');
+                this.showStatusBubble(0, "Ù! 🎉", 3000);
                 
                 const performMeldAnimation = () => {
                     this.animateULayMelds(0, () => {
@@ -2129,13 +1819,13 @@ class GameManager {
 
         if (this.turnStep !== 'LAY_MELDS') return;
         
-        this.startPlayerMeldPhase(mySeat, () => {
+        this.startPlayerMeldPhase(0, () => {
             AudioSynth.playClick();
-            if (this.players[mySeat]) this.players[mySeat].melds = [];
-            if (this.players[mySeat]) this.players[mySeat].hasLaidMelds = true; // Đã hạ bài
+            this.players[0].melds = [];
+            this.players[0].hasLaidMelds = true; // Đã hạ bài
             
-            let partition = getBestPartitions((this.players[mySeat] && this.players[mySeat].hand) ? this.players[mySeat].hand : []);
-            let totalMeldsCount = ((this.players[mySeat] && this.players[mySeat].eaten) ? this.players[mySeat].eaten.length : 0) + partition.phoms.length;
+            let partition = getBestPartitions(this.players[0].hand);
+            let totalMeldsCount = this.players[0].eaten.length + partition.phoms.length;
             let animationsToRun = [];
 
             if (totalMeldsCount > 0) {
@@ -2152,23 +1842,23 @@ class GameManager {
                         });
                     });
 
-                    if (this.players[mySeat]) this.players[mySeat].melds = [...partition.phoms];
+                    this.players[0].melds = [...partition.phoms];
                     partition.phoms.forEach(phom => {
-                        phom.forEach(c => { if (this.players[mySeat]) this.players[mySeat].removeCard(c.id); });
+                        phom.forEach(c => this.players[0].removeCard(c.id));
                     });
                     
                     this.logMessage(`Bạn hạ thêm ${partition.phoms.length} Phỏm!`, 'player');
-                    this.showStatusBubble(mySeat, `Hạ ${partition.phoms.length} Phỏm!`, 2000);
+                    this.showStatusBubble(0, `Hạ ${partition.phoms.length} Phỏm!`, 2000);
                     AudioSynth.playMeld();
                 } else {
                     this.logMessage(`Bạn hạ bài (Phỏm ăn có sẵn).`, 'player');
-                    this.showStatusBubble(mySeat, "Hạ bài!", 2000);
+                    this.showStatusBubble(0, "Hạ bài!", 2000);
                 }
             } else {
-                if (this.players[mySeat]) this.players[mySeat].isMom = true;
+                this.players[0].isMom = true;
                 this.logMessage(`Bạn không có Phỏm nào (Móm)!`, 'alert');
-                this.showStatusBubble(mySeat, "Móm!", 2000);
-                if (this.players[mySeat]) this.players[mySeat].isMom = true;
+                this.showStatusBubble(0, "Móm!", 2000);
+                this.players[0].isMom = true;
                 AudioSynth.playLose();
             }
 
@@ -2176,10 +1866,10 @@ class GameManager {
             this.renderMelds();
 
             const proceed = () => {
-                if ((this.players[mySeat] && this.players[mySeat].hand.length === 0)) {
-                    if (this.players[mySeat]) this.players[mySeat].isU = true;
+                if (this.players[0].hand.length === 0) {
+                    this.players[0].isU = true;
                     this.logMessage(`Bạn đã Ù (Ù hạ hết)!`, 'win');
-                    this.showStatusBubble(mySeat, "Ù!!! 🎉", 3000);
+                    this.showStatusBubble(0, "Ù!!! 🎉", 3000);
                     this.endGame();
                     return;
                 }
@@ -2224,8 +1914,7 @@ class GameManager {
     }
 
     playerSendCards() {
-        const mySeat = this.online ? this.seatIdx : 0;
-        if (this.currentTurnIdx !== mySeat || this.turnStep !== 'SEND_CARDS') return;
+        if (this.currentTurnIdx !== 0 || this.turnStep !== 'SEND_CARDS') return;
 
         // Xóa bộ hẹn giờ nếu được gọi thủ công bằng nút bấm
         if (this.autoSendTimeout) {
@@ -2238,8 +1927,8 @@ class GameManager {
 
         // Vòng lặp tìm kiếm và thực hiện gửi bài liên tiếp (chained sends)
         while (hasNewSends) {
-            let sends = this.findPossibleSends(mySeat);
-            if (sends.length === 0 || (this.players[mySeat] && this.players[mySeat].isMom)) {
+            let sends = this.findPossibleSends(0);
+            if (sends.length === 0 || this.players[0].isMom) {
                 hasNewSends = false;
             } else {
                 let uniqueSends = [];
@@ -2260,7 +1949,7 @@ class GameManager {
                         const cardEl = document.getElementById(send.card.id);
                         const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
                         
-                        let removed = (this.players[mySeat]) ? this.players[mySeat].removeCard(send.card.id) : null;
+                        let removed = this.players[0].removeCard(send.card.id);
                         if (removed) {
                             if (send.meldType === 'eaten') {
                                 this.players[send.targetPlayerIdx].eaten[send.meldIdx].push(removed);
@@ -2282,17 +1971,17 @@ class GameManager {
 
         if (animationsToRun.length > 0) {
             AudioSynth.playClick();
-            this.showStatusBubble(mySeat, `Gửi ${animationsToRun.length} lá!`, 2000);
+            this.showStatusBubble(0, `Gửi ${animationsToRun.length} lá!`, 2000);
         }
 
         this.renderPlayerHand();
         this.renderMelds();
 
         const proceed = () => {
-            if ((this.players[mySeat] && this.players[mySeat].hand.length === 0)) {
-                if (this.players[mySeat]) this.players[mySeat].isU = true;
+            if (this.players[0].hand.length === 0) {
+                this.players[0].isU = true;
                 this.logMessage(`Bạn đã gửi hết bài và Ù!`, 'win');
-                this.showStatusBubble(mySeat, "Ù!!! 🎉", 3000);
+                this.showStatusBubble(0, "Ù!!! 🎉", 3000);
                 this.endGame();
                 return;
             }
@@ -2387,8 +2076,8 @@ class GameManager {
         this.updateHUD();
         this.renderAll();
 
-        if (!this.online && !this.isMyTurn()) {
-            // AI Turn (only in offline/local mode)
+        if (this.currentTurnIdx !== 0) {
+            // AI Turn
             setTimeout(() => this.runAITurn(), 1200);
         }
     }
@@ -2476,7 +2165,7 @@ class GameManager {
         this.updateHUD();
         this.renderAll();
         
-        if (!this.online && this.currentTurnIdx !== 0) {
+        if (this.currentTurnIdx !== 0) {
             this.startPlayerMeldPhase(this.currentTurnIdx, () => {
                 setTimeout(() => this.runAIMeldTurn(), 1000);
             });
@@ -2486,7 +2175,6 @@ class GameManager {
     // --- AI DECISION LOGIC ---
 
     runAITurn() {
-        if (this.online) return; // No AI when in online mode
         if (this.currentTurnIdx === 0) return; // Not AI's turn
         let ai = this.players[this.currentTurnIdx];
         
@@ -2590,8 +2278,7 @@ class GameManager {
             this.renderAIHands();
             
             // Find the new card back inside container
-            const domIdx = this.online ? this.serverSeatToDomIndex(this.currentTurnIdx) : this.currentTurnIdx;
-            const container = document.getElementById('hand-' + domIdx);
+            const container = document.getElementById('hand-' + this.currentTurnIdx);
             const lastCardEl = container ? container.lastElementChild : null;
             if (lastCardEl) {
                 lastCardEl.style.opacity = '0';
@@ -2633,8 +2320,7 @@ class GameManager {
         let discardCard = this.chooseAIDiscard(this.currentTurnIdx);
         if (discardCard) {
             // Get starting rect: last card back of AI hand
-            const domIdx2 = this.online ? this.serverSeatToDomIndex(this.currentTurnIdx) : this.currentTurnIdx;
-            const container = document.getElementById('hand-' + domIdx2);
+            const container = document.getElementById('hand-' + this.currentTurnIdx);
             const lastCardEl = container ? container.lastElementChild : null;
             const startRect = lastCardEl ? lastCardEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
 

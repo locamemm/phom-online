@@ -161,15 +161,6 @@
                     <button class="wood-btn small-btn" id="btnRestart">Ván mới</button>
                 </div>
             </div>
-            <!-- Online Controls -->
-            <div class="online-controls" id="onlineControls">
-                <input id="playerName" placeholder="Tên" value="Bạn" />
-                <input id="roomIdInput" placeholder="Mã phòng (tùy chọn)" />
-                <button class="wood-btn small-btn" id="btnCreateRoom">Tạo phòng</button>
-                <button class="wood-btn small-btn" id="btnJoinRoom">Tham gia</button>
-                <button class="wood-btn small-btn" id="btnStartOnline">Bắt đầu</button>
-                <div id="roomStatus"></div>
-            </div>
         </div>
 
         <!-- Popups & Modals -->
@@ -269,8 +260,6 @@
         <div class="floating-text-container" id="floatingTexts"></div>
     </div>
 
-    <!-- Socket.IO client for online mode -->
-    <script src="/socket.io/socket.io.js"></script>
     <!-- Background music option - synthesized code via Web Audio -->
     <script src="game.js"></script>
 </body>
