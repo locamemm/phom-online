@@ -33,8 +33,12 @@ body {
     background-color: var(--bg-dark);
     color: #eeddcc;
     overflow: hidden;
-    width: 100vw;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
     height: 100vh;
+    height: 100dvh;
 }
 
 /* Master Wrapper */
@@ -132,8 +136,8 @@ body {
 /* Center Deco Items (Tea Set, Sunflower Seeds 2D Pixel) */
 .decorations-center {
     position: absolute;
-    top: 50%;
-    left: 55%;
+    top: 55%;
+    left: 59%;
     width: 140px;
     height: 140px;
     transform: translate(-50%, -50%);
@@ -217,7 +221,7 @@ body {
 .center-card-pile {
     position: absolute;
     top: 50%;
-    left: 50%;
+    left: 59%;
     width: var(--card-width);
     height: var(--card-height);
     transform: translate(-150px, -44px);
@@ -229,6 +233,21 @@ body {
     position: relative;
     width: 100%;
     height: 100%;
+}
+
+/* Retro Rotate-Shake Animation targeting only the TOP card of the deck */
+.card-back-stack.rumble > .card-face-back:last-child {
+    animation: top-card-rotate-shake 1.2s steps(1) infinite;
+}
+
+@keyframes top-card-rotate-shake {
+    0% { rotate: 0deg; }
+    10% { rotate: -6deg; }
+    20% { rotate: 6deg; }
+    30% { rotate: -6deg; }
+    40% { rotate: 6deg; }
+    50% { rotate: 0deg; }
+    100% { rotate: 0deg; } /* Nhịp nghỉ 50% thời lượng */
 }
 
 /* Stack borders for 2D pile look */
@@ -337,22 +356,25 @@ body {
     border-radius: 0;
     pointer-events: auto;
     z-index: 100;
+    width: max-content;
+    white-space: nowrap;
 }
 
 /* Specific Badge Placements */
 .player-bottom .player-avatar-container {
-    top: 30px;
+    top: 55px;
     left: 50%;
     transform: translateX(-50%);
 }
 .player-right .player-avatar-container {
-    top: -45px;
+    bottom: -45px;
+    top: auto;
     left: 50%;
     transform: translateX(-50%);
 }
 .player-top .player-avatar-container {
     bottom: 0px;
-    left: 50%;
+    left: 65%;
     transform: translateX(-50%);
 }
 .player-left .player-avatar-container {
@@ -447,8 +469,23 @@ body {
     width: 100%;
     height: 100%;
     border-radius: 4px;
-    border: 3px solid var(--dark-border);
     box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.4);
+    overflow: hidden; /* Clips children to rounded corners */
+}
+
+/* Border overlay drawn on top of all card face elements (including background images) */
+.card-face::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 3px solid var(--dark-border);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 3; /* Drawn over card-bg-image */
+    box-sizing: border-box;
 }
 
 /* Card Back Design (Classic Pixel Caro/Diamonds Pattern) */
@@ -488,30 +525,52 @@ body {
     font-size: 20px;
     font-weight: bold;
     line-height: 0.85;
+    z-index: 4; /* Drawn on top of border overlay */
+    text-shadow: 
+        1.5px 1.5px 0px #fff, 
+        -1.5px -1.5px 0px #fff, 
+        1.5px -1.5px 0px #fff, 
+        -1.5px 1.5px 0px #fff,
+        1.5px 0px 0px #fff,
+        -1.5px 0px 0px #fff,
+        0px 1.5px 0px #fff,
+        0px -1.5px 0px #fff;
 }
 .card-corner .suit-mini {
     font-size: 14px;
     margin-top: 1px;
 }
 
+/* Card full-size background image for J Q K */
+.card-bg-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 1; /* Render behind card corner text and border overlay */
+}
+
+/* Position corners adjusted for lack of native parent border (moved by +3px offset) */
 .card-corner.top-left {
-    top: 4px;
-    left: 6px;
+    top: 7px;
+    left: 9px;
 }
 
 .card-corner.top-right {
-    top: 4px;
-    right: 6px;
+    top: 7px;
+    right: 9px;
 }
 
 .card-corner.bottom-left {
-    bottom: 4px;
-    left: 6px;
+    bottom: 7px;
+    left: 9px;
 }
 
 .card-corner.bottom-right {
-    bottom: 4px;
-    right: 6px;
+    bottom: 7px;
+    right: 9px;
 }
 
 /* Large Suit in Center */
@@ -522,19 +581,22 @@ body {
     transform: translate(-50%, -50%);
     font-size: 28px;
     line-height: 1;
+    z-index: 2;
 }
 
 /* Main User Hand Arrangement (Flat row) */
 .player-hand-container {
     position: absolute;
-    bottom: -60px;
-    left: 50%;
+    bottom: -80px;
+    left: 38%;
     transform: translateX(-50%);
     width: 100%;
     height: 110px;
     display: flex;
     justify-content: center;
     align-items: flex-end;
+    --card-scale: 1;
+    z-index: 110;
 }
 
 /* Special Horizontal Spacing using CSS variables, snappy lift */
@@ -552,7 +614,7 @@ body {
         translateX(var(--offset-x)) 
         rotate(var(--angle-z))
         translateY(calc(var(--arch-y) + var(--lift-y)))
-        scale(var(--scale));
+        scale(calc(var(--scale) * var(--card-scale)));
 }
 
 
@@ -590,18 +652,20 @@ body {
 .player-bottom .player-melds .phom-slot {
     position: absolute;
     top: 0;
+    border: none;
 }
 .player-bottom .player-melds .phom-slot:nth-child(1) {
-    left: -50px;
+    left: -102px;
 }
 .player-bottom .player-melds .phom-slot:nth-child(2) {
-    right: -35px;
+    right: -5px;
 }
 .player-bottom .player-melds .phom-slot:nth-child(3) {
-    right: -155px;
+    right: -135px;
 }
 .player-right .player-melds {
-    top: 60px;
+    bottom: 60px;
+    top: auto;
     left: -110px;
     flex-direction: column;
 }
@@ -658,13 +722,17 @@ body {
 .player-hand-back-container {
     position: absolute;
     bottom: 20px;
-    left: 50%;
+    left: 65%;
     transform: translateX(-50%);
     width: 80%;
     height: 90px;
     display: flex;
     justify-content: center;
     align-items: flex-end;
+}
+.player-right .player-hand-back-container {
+    top: 20px;
+    bottom: auto;
 }
 
 /* HUD Overlay Styles (Crisp 2D, retro gaming feel) */
@@ -724,6 +792,51 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    z-index: 30; /* Ensure top header stays above online-controls */
+}
+
+/* Online controls floating near the top-right but visually separated */
+.online-controls {
+    position: absolute;
+    /* place below the top-bar to avoid overlap */
+    top: 64px;
+    right: 18px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    z-index: 5; /* Keep behind primary HUD elements (so old GUI stays visible) */
+    background: var(--hud-bg);
+    border: 3px solid var(--dark-border);
+    padding: 6px 8px;
+    box-shadow: 6px 6px 0px rgba(0,0,0,0.45);
+    pointer-events: auto;
+    backdrop-filter: blur(2px);
+}
+
+.online-controls input[type="text"], .online-controls input[type="search"], .online-controls input:not([type]) {
+    font-family: 'VT323', monospace;
+    font-size: 16px;
+    color: #ffd8a8;
+    background: #3b271b;
+    border: 2px solid var(--dark-border);
+    padding: 6px 8px;
+    outline: none;
+    box-shadow: none;
+}
+
+@media (max-width: 900px) {
+    .online-controls {
+        right: 12px;
+        top: 56px;
+        gap: 6px;
+        padding: 4px 6px;
+    }
+    .online-controls input { font-size: 14px; }
+}
+
+/* If top-bar becomes taller (mobile), ensure online-controls doesn't cover it */
+@media (max-width: 600px) {
+    .online-controls { top: 84px; right: 10px; }
 }
 
 .logo {
@@ -819,6 +932,40 @@ body {
     font-weight: 700;
     color: var(--accent-color);
     border-bottom: 2px solid var(--dark-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.panel-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.log-control-btn {
+    cursor: pointer;
+    font-size: 12px;
+    user-select: none;
+    color: var(--accent-color);
+    transition: color 0.1s;
+}
+
+.log-control-btn:hover {
+    color: #ffffff;
+}
+
+/* Minimized and Maximized states for log panel */
+.game-log-panel.minimized {
+    height: 31px !important;
+}
+.game-log-panel.minimized .log-messages {
+    display: none !important;
+}
+
+.game-log-panel.maximized {
+    width: 420px !important;
+    height: 320px !important;
+    z-index: 15; /* Ensure it overlays hands/HUD cleanly when maximized */
 }
 
 .log-messages {
@@ -855,6 +1002,7 @@ body {
     left: 0;
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     background: rgba(0, 0, 0, 0.75);
     display: none;
     justify-content: center;
@@ -1011,20 +1159,123 @@ body {
 }
 
 /* Responsive tweaks for 2D */
-@media (max-width: 800px) {
-    .straw-mat {
-        transform: scale(0.8);
-    }
+@media (max-width: 800px), (max-height: 550px) {
     .game-log-panel {
-        display: none;
+        display: none !important;
     }
 }
 @media (max-height: 600px) {
-    .straw-mat {
-        transform: scale(0.7);
-    }
     .action-panel {
         bottom: 8px;
+    }
+}
+
+/* Mobile Portrait Mode (< 767px width) */
+@media (max-width: 767px) {
+    .straw-mat {
+        width: 990px;
+        height: 650px;
+    }
+    .player-hand-container {
+        bottom: -105px;
+        --card-scale: 1.25;
+    }
+    .top-bar {
+        flex-direction: column;
+        gap: 6px;
+        top: 8px;
+        align-items: center;
+    }
+    .logo {
+        font-size: 20px;
+        text-shadow: 2px 2px 0px #1a1a1a;
+    }
+    .bet-info-container {
+        font-size: 14px;
+        padding: 2px 8px;
+    }
+    .hud-buttons {
+        gap: 6px;
+    }
+    .hud-buttons .small-btn {
+        font-size: 14px;
+        padding: 2px 8px;
+    }
+    
+    .action-panel {
+        width: 95%;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px;
+        padding: 6px 10px;
+        bottom: 8px;
+        box-shadow: 4px 4px 0px rgba(0,0,0,0.5);
+    }
+    .action-panel .wood-btn {
+        font-size: 15px;
+        padding: 4px 8px;
+        min-width: 70px;
+    }
+    
+    /* Optimize modals for small width */
+    .wood-modal {
+        max-width: 95%;
+        outline-width: 2px !important;
+        outline-offset: -8px !important;
+    }
+    .modal-header {
+        padding: 10px 14px 6px;
+    }
+    .modal-header h2 {
+        font-size: 16px;
+    }
+    .score-table {
+        font-size: 12px;
+        margin-bottom: 12px;
+    }
+    .score-table th, .score-table td {
+        padding: 4px 6px;
+    }
+    .winner-announcement {
+        font-size: 18px;
+    }
+}
+
+/* Mobile Landscape Mode (< 500px height) */
+@media (max-height: 500px) {
+    .straw-mat {
+        width: 990px;
+    }
+    .top-bar {
+        top: 6px;
+    }
+    .logo {
+        display: none; /* Hide logo to save space on landscape */
+    }
+    .bet-info-container {
+        font-size: 14px;
+        padding: 2px 8px;
+    }
+    .hud-buttons .small-btn {
+        font-size: 14px;
+        padding: 2px 8px;
+    }
+    .action-panel {
+        bottom: 2px !important;
+        padding: 2px 6px !important;
+        gap: 4px !important;
+    }
+    .action-panel .wood-btn {
+        font-size: 13px !important;
+        padding: 2px 6px !important;
+        min-width: 65px !important;
+    }
+    .player-bottom {
+        bottom: -10px !important;
+    }
+    .player-hand-container {
+        bottom: -60px !important;
+        --card-scale: 1.25 !important;
     }
 }
 
@@ -1122,4 +1373,109 @@ body {
 #gameOverModal.minimized .modal-body,
 #gameOverModal.minimized .modal-footer {
     display: none !important;
+}
+
+/* Pseudo-fullscreen for devices without native Fullscreen API support (like iPhone Safari) */
+body.pseudo-fullscreen .logo {
+    display: none !important;
+}
+body.pseudo-fullscreen .game-log-panel {
+    display: none !important;
+}
+body.pseudo-fullscreen .top-bar {
+    top: 5px !important;
+    padding: 0 !important;
+}
+body.pseudo-fullscreen .bet-info-container {
+    padding: 2px 6px !important;
+    font-size: 13px !important;
+}
+body.pseudo-fullscreen .hud-buttons .wood-btn {
+    font-size: 13px !important;
+    padding: 2px 6px !important;
+}
+body.pseudo-fullscreen .action-panel {
+    bottom: 4px !important;
+    padding: 4px 8px !important;
+}
+
+/* Highlight Ù button glowing styling */
+@keyframes pulse-gold {
+    0% {
+        box-shadow: 4px 4px 0px var(--dark-border), 0 0 0 0px rgba(255, 215, 0, 0.8);
+    }
+    70% {
+        box-shadow: 4px 4px 0px var(--dark-border), 0 0 0 10px rgba(255, 215, 0, 0);
+    }
+    100% {
+        box-shadow: 4px 4px 0px var(--dark-border), 0 0 0 0px rgba(255, 215, 0, 0);
+    }
+}
+.wood-btn.highlight-u {
+    background: #e67e22 !important;
+    color: #ffffff !important;
+    border-color: #ffd700 !important;
+    animation: pulse-gold 1.5s infinite;
+}
+.wood-btn.highlight-u:hover {
+    background: #f39c12 !important;
+}
+
+/* Không tối màn hình khi hiện bảng Kết Quả */
+#gameOverModal.show:not(.minimized) {
+    background: transparent !important;
+}
+
+/* Thu nhỏ bảng Kết Quả (scale 0.84) */
+#gameOverModal.show:not(.minimized) .wood-modal {
+    transform: scale(0.84) !important;
+    transform-origin: center;
+}
+
+@media (min-width: 1000px) {
+    #gameOverModal.show:not(.minimized) .wood-modal {
+        transform: scale(0.84) !important;
+        transform-origin: right center; /* Dựng sát lề phải hơn trên màn hình rộng */
+    }
+}
+
+/* Hiệu ứng hover và active cho dòng lịch sử */
+#historyTableBody tr.history-row {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+#historyTableBody tr.history-row:hover {
+    background-color: rgba(223, 183, 108, 0.15) !important;
+}
+#historyTableBody tr.history-row:active {
+    background-color: rgba(223, 183, 108, 0.3) !important;
+}
+
+/* Ký hiệu 2 mũi tên vòng cung ở 2 góc bên dưới chiếu cói (ở ngoài chiếu, trên sàn gỗ) */
+.mat-direction-indicator {
+    position: absolute;
+    bottom: -80px; /* Đẩy xuống ngoài chiếu */
+    font-size: 40px;
+    font-family: 'Silkscreen', 'VT323', monospace;
+    font-weight: bold;
+    color: rgba(223, 183, 108, 0.15); /* Dạng khảm vàng mờ trên nền sàn gỗ tối */
+    transition: all 0.3s steps(3);
+    z-index: 5;
+    pointer-events: none;
+    user-select: none;
+    text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.5);
+}
+
+.mat-direction-indicator.ccw-arrow {
+    right: -80px; /* Di chuyển ra ngoài chiếu sang bên PHẢI */
+}
+
+.mat-direction-indicator.cw-arrow {
+    left: -80px; /* Di chuyển ra ngoài chiếu sang bên TRÁI */
+}
+
+/* Phát sáng khi hướng chơi đó active (Glow tĩnh không nhấp nháy) */
+.mat-direction-indicator.active {
+    color: #ffd8a8; /* Màu vàng sáng chói retro */
+    text-shadow: 0 0 10px var(--accent-color), 0 0 20px #ffaa00, 2px 2px 0px #000;
 }

@@ -58,7 +58,7 @@
                             <div class="avatar user-avatar">Ta</div>
                             <div class="player-info">
                                 <div class="player-name">Bạn (Ta)</div>
-                                <div class="player-balance" id="balance-0">1,000,000 Xu</div>
+                                <div class="player-balance" id="balance-0">0 Điểm</div>
                             </div>
                             <div class="player-status-tag" id="status-0"></div>
                         </div>
@@ -76,7 +76,7 @@
                             <div class="avatar ai-avatar-1">LH</div>
                             <div class="player-info">
                                 <div class="player-name">Lâm Híp</div>
-                                <div class="player-balance" id="balance-1">1,000,000 Xu</div>
+                                <div class="player-balance" id="balance-1">0 Điểm</div>
                             </div>
                             <div class="player-status-tag" id="status-1"></div>
                         </div>
@@ -91,7 +91,7 @@
                             <div class="avatar ai-avatar-2">B3</div>
                             <div class="player-info">
                                 <div class="player-name">Bác Ba Phi</div>
-                                <div class="player-balance" id="balance-2">1,000,000 Xu</div>
+                                <div class="player-balance" id="balance-2">0 Điểm</div>
                             </div>
                             <div class="player-status-tag" id="status-2"></div>
                         </div>
@@ -106,7 +106,7 @@
                             <div class="avatar ai-avatar-3">CH</div>
                             <div class="player-info">
                                 <div class="player-name">Chị Hoa</div>
-                                <div class="player-balance" id="balance-3">1,000,000 Xu</div>
+                                <div class="player-balance" id="balance-3">0 Điểm</div>
                             </div>
                             <div class="player-status-tag" id="status-3"></div>
                         </div>
@@ -115,6 +115,10 @@
                         <div class="player-hand-back-container" id="hand-3"></div>
                     </div>
 
+                    <!-- Direction indicator arrows at the bottom corners of the mat -->
+                    <div class="mat-direction-indicator ccw-arrow" id="dirCCW" title="Chiều Ngược Kim Đồng Hồ">↺</div>
+                    <div class="mat-direction-indicator cw-arrow" id="dirCW" title="Chiều Kim Đồng Hồ">↻</div>
+
                 </div>
             </div>
         </div>
@@ -122,8 +126,14 @@
         <!-- Floating UI / HUD Controls -->
         <div class="hud-container">
             <!-- Left Panel: Game Log / Chat -->
-            <div class="game-log-panel">
-                <div class="panel-header">Nhật Ký Trận Đấu</div>
+            <div class="game-log-panel" id="gameLogPanel">
+                <div class="panel-header">
+                    <span>Nhật Ký Trận Đấu</span>
+                    <div class="panel-controls">
+                        <span class="log-control-btn" id="btnMinimizeLog" title="Thu nhỏ">➖</span>
+                        <span class="log-control-btn" id="btnMaximizeLog" title="Phóng to">🗖</span>
+                    </div>
+                </div>
                 <div class="log-messages" id="logMessages">
                     <div class="log-message system">Chào mừng bạn đến với Phỏm Chiếu Cói!</div>
                 </div>
@@ -131,35 +141,69 @@
 
             <!-- Bottom Center Panel: Player Actions (Wooden cards layout) -->
             <div class="action-panel" id="actionPanel">
-                <button class="wood-btn btn-action" id="btnDraw" disabled>Bốc Bài</button>
                 <button class="wood-btn btn-action" id="btnEat" disabled>Ăn Bài</button>
                 <button class="wood-btn btn-action" id="btnDiscard" disabled>Đánh Bài</button>
                 <button class="wood-btn btn-secondary" id="btnSort">Xếp Bài</button>
                 <button class="wood-btn btn-action" id="btnLayMelds" disabled>Hạ Phỏm</button>
-                <button class="wood-btn btn-action" id="btnSendCards" disabled>Gửi Bài</button>
             </div>
 
             <!-- Top Header Bar: Logo, Cược, Menu -->
             <div class="top-bar">
                 <h1 class="logo">Phỏm Chiếu Cói</h1>
                 <div class="bet-info-container">
-                    <span>Mức cược: </span>
-                    <select id="betSelect" class="wood-select">
-                        <option value="5000">5.000 Xu</option>
-                        <option value="10000" selected>10.000 Xu</option>
-                        <option value="20000">20.000 Xu</option>
-                        <option value="50000">50.000 Xu</option>
-                    </select>
+                    <span>Chế độ: <b>Tính Điểm</b></span>
                 </div>
                 <div class="hud-buttons">
                     <button class="wood-btn small-btn" id="btnSound" title="Bật/Tắt âm thanh">🔊 Âm thanh</button>
+                    <button class="wood-btn small-btn" id="btnFullscreen" title="Bật/Tắt toàn màn hình">⛶ Full screen</button>
                     <button class="wood-btn small-btn" id="btnHelp">Hướng dẫn</button>
+                    <button class="wood-btn small-btn" id="btnHistory">Lịch sử</button>
                     <button class="wood-btn small-btn" id="btnRestart">Ván mới</button>
                 </div>
+            </div>
+            <!-- Online Controls -->
+            <div class="online-controls" id="onlineControls">
+                <input id="playerName" placeholder="Tên" value="Bạn" />
+                <input id="roomIdInput" placeholder="Mã phòng (tùy chọn)" />
+                <button class="wood-btn small-btn" id="btnCreateRoom">Tạo phòng</button>
+                <button class="wood-btn small-btn" id="btnJoinRoom">Tham gia</button>
+                <button class="wood-btn small-btn" id="btnStartOnline">Bắt đầu</button>
+                <div id="roomStatus"></div>
             </div>
         </div>
 
         <!-- Popups & Modals -->
+        <!-- 3. History Modal -->
+        <div class="modal-overlay" id="historyModal">
+            <div class="wood-modal history-modal">
+                <div class="modal-header">
+                    <h2>Lịch Sử Điểm Số</h2>
+                    <span class="close-btn" id="closeHistory">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div style="max-height: 250px; overflow-y: auto; border: 2px solid var(--dark-border); background: var(--secondary-color); padding: 4px;">
+                        <table class="score-table" style="width: 100%; border-collapse: collapse; margin-bottom: 0;">
+                            <thead>
+                                <tr>
+                                    <th>Ván</th>
+                                    <th>Bạn (Ta)</th>
+                                    <th>Lâm Híp</th>
+                                    <th>Bác Ba Phi</th>
+                                    <th>Chị Hoa</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody">
+                                <!-- JS dynamically populates -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="modal-footer" style="margin-top: 15px; justify-content: center; display: flex;">
+                        <button class="wood-btn big-btn" id="btnClearHistory">Xóa Lịch Sử</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 1. Help Modal -->
         <div class="modal-overlay" id="helpModal">
             <div class="wood-modal">
@@ -206,7 +250,7 @@
                                 <th>Phỏm</th>
                                 <th>Điểm rác</th>
                                 <th>Kết quả</th>
-                                <th>Tiền Xu</th>
+                                <th>Điểm Số</th>
                             </tr>
                         </thead>
                         <tbody id="scoreTableBody">
@@ -225,6 +269,8 @@
         <div class="floating-text-container" id="floatingTexts"></div>
     </div>
 
+    <!-- Socket.IO client for online mode -->
+    <script src="/socket.io/socket.io.js"></script>
     <!-- Background music option - synthesized code via Web Audio -->
     <script src="game.js"></script>
 </body>

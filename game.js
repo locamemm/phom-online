@@ -82,6 +82,34 @@ const AudioSynth = {
             osc.start(t + idx * 0.09);
             osc.stop(t + idx * 0.09 + 0.3);
         });
+     },
+    playU() {
+        if (!this.enabled || !this.ctx) return;
+        this.resumeContext();
+        let t = this.ctx.currentTime;
+        // Bouncy chiptune 8-bit arpeggio
+        let notes = [
+            523.25, 392.00, 523.25, 392.00, // C5, G4, C5, G4
+            587.33, 440.00, 587.33, 440.00, // D5, A4, D5, A4
+            659.25, 523.25, 783.99, 659.25, // E5, C5, G5, E5
+            1046.50, 783.99, 1318.51, 1046.50, // C6, G5, E6, C6
+            1567.98 // G6
+        ];
+        notes.forEach((freq, idx) => {
+            let osc = this.ctx.createOscillator();
+            let gain = this.ctx.createGain();
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.type = 'square';
+            let noteTime = t + idx * 0.07;
+            osc.frequency.setValueAtTime(freq, noteTime);
+            osc.frequency.linearRampToValueAtTime(freq + 15, noteTime + 0.05); // Bouncy pitch shift/vibrato
+            
+            gain.gain.setValueAtTime(0.08, noteTime);
+            gain.gain.exponentialRampToValueAtTime(0.005, noteTime + 0.08);
+            osc.start(noteTime);
+            osc.stop(noteTime + 0.1);
+        });
     },
     playLose() {
         if (!this.enabled || !this.ctx) return;
@@ -218,7 +246,7 @@ class Card {
 
 // Player state
 class Player {
-    constructor(id, name, balance = 1000000, isAI = false) {
+    constructor(id, name, balance = 0, isAI = false) {
         this.id = id; // 0: Player (User), 1: East AI, 2: North AI, 3: West AI
         this.name = name;
         this.balance = balance;
@@ -233,6 +261,9 @@ class Player {
         this.isU = false;
         this.score = 0;
         this.placement = 0; // 1st, 2nd, 3rd, 4th
+        this.matchEatPoints = 0; // NEW: track eat points in this match
+        this.matchPlacementPoints = 0; // NEW: track placement points in this match
+        this.hasLaidMelds = false; // Trạng thái đã hạ bài trong ván đấu
     }
 
     reset() {
@@ -245,6 +276,9 @@ class Player {
         this.isU = false;
         this.score = 0;
         this.placement = 0;
+        this.matchEatPoints = 0;
+        this.matchPlacementPoints = 0;
+        this.hasLaidMelds = false;
     }
 
     addCard(card) {
@@ -264,16 +298,17 @@ class Player {
 class GameManager {
     constructor() {
         this.players = [
-            new Player(0, "Bạn", 1000000, false),
-            new Player(1, "Lâm Híp", 1000000, true),
-            new Player(2, "Bác Ba Phi", 1000000, true),
-            new Player(3, "Chị Hoa", 1000000, true)
+            new Player(0, "Bạn", 0, false),
+            new Player(1, "Lâm Híp", 0, true),
+            new Player(2, "Bác Ba Phi", 0, true),
+            new Player(3, "Chị Hoa", 0, true)
         ];
         this.deck = [];
         this.drawPile = []; // Draw stack (Nọc)
         this.tableDiscards = [[], [], [], []];
         
         this.dealerIdx = 0; // Index of dealer (gets 10 cards)
+        this.playDirection = 1; // 1 = Counter-clockwise (0->1->2->3), -1 = Clockwise (0->3->2->1)
         this.currentTurnIdx = 0; // Whose turn is it
         
         this.roundNum = 1; // 1 to 4 rounds
@@ -283,6 +318,7 @@ class GameManager {
         this.isDrawingOrEating = false;
         this.isReturningDiscards = false;
         this.meldStartIdx = 0;
+        this.hasStartedDọnRác = false;
         
         this.betAmount = 10000;
         this.lastDiscardedCard = null;
@@ -291,7 +327,14 @@ class GameManager {
         this.consecutiveEatenCounts = [0, 0, 0, 0]; // Track how many times a player was eaten consecutively by next player (for đền bài)
         
         this.gameHistory = [];
+        this.scoreHistory = [];
+        this.gameHistoryRecords = [];
+        this.isViewingHistoryRecord = false;
+        this.returnToHistoryOnClose = false;
         this.sortMode = 'SUIT'; // 'SUIT' or 'RANK'
+        this.autoSendTimeout = null;
+        this.baseWidth = 760;
+        this.baseHeight = 520;
         
         this.initDOM();
         this.resetGame();
@@ -299,14 +342,39 @@ class GameManager {
 
     initDOM() {
         // Core buttons
-        document.getElementById('btnDraw').addEventListener('click', () => this.playerDraw());
         document.getElementById('btnEat').addEventListener('click', () => this.playerEat());
         document.getElementById('btnDiscard').addEventListener('click', () => this.playerDiscard());
         document.getElementById('btnSort').addEventListener('click', () => this.toggleSort());
         document.getElementById('btnLayMelds').addEventListener('click', () => this.playerLayMelds());
-        document.getElementById('btnSendCards').addEventListener('click', () => this.playerSendCards());
         document.getElementById('btnRestart').addEventListener('click', () => this.manualRestart());
         document.getElementById('btnNextGame').addEventListener('click', () => this.startNextGame());
+        
+        // History Modal Listeners
+        const btnHistory = document.getElementById('btnHistory');
+        const historyModal = document.getElementById('historyModal');
+        if (btnHistory && historyModal) {
+            btnHistory.addEventListener('click', () => {
+                this.renderHistoryTable();
+                historyModal.classList.add('show');
+                AudioSynth.playClick();
+            });
+            document.getElementById('closeHistory').addEventListener('click', () => {
+                historyModal.classList.remove('show');
+                AudioSynth.playClick();
+            });
+            document.getElementById('btnClearHistory').addEventListener('click', () => {
+                AudioSynth.playClick();
+                if (confirm("Bạn có muốn xóa toàn bộ lịch sử điểm số và khôi phục điểm về 0?")) {
+                    this.scoreHistory = [];
+                    this.gameHistoryRecords = [];
+                    this.players.forEach(p => p.balance = 0);
+                    this.renderHistoryTable();
+                    this.updateHUD();
+                    historyModal.classList.remove('show');
+                    this.resetGame();
+                }
+            });
+        }
         
         // Modals
         const helpModal = document.getElementById('helpModal');
@@ -335,6 +403,43 @@ class GameManager {
             });
         }
         
+        // Minimize / Maximize Log Panel
+        const btnMinimizeLog = document.getElementById('btnMinimizeLog');
+        const btnMaximizeLog = document.getElementById('btnMaximizeLog');
+        const gameLogPanel = document.getElementById('gameLogPanel');
+        if (btnMinimizeLog && btnMaximizeLog && gameLogPanel) {
+            btnMinimizeLog.addEventListener('click', () => {
+                AudioSynth.playClick();
+                if (gameLogPanel.classList.contains('minimized')) {
+                    gameLogPanel.classList.remove('minimized');
+                    btnMinimizeLog.textContent = '➖';
+                    btnMinimizeLog.title = 'Thu nhỏ';
+                } else {
+                    gameLogPanel.classList.remove('maximized');
+                    gameLogPanel.classList.add('minimized');
+                    btnMinimizeLog.textContent = '➕';
+                    btnMinimizeLog.title = 'Mở rộng';
+                    btnMaximizeLog.textContent = '🗖';
+                    btnMaximizeLog.title = 'Phóng to';
+                }
+            });
+            btnMaximizeLog.addEventListener('click', () => {
+                AudioSynth.playClick();
+                if (gameLogPanel.classList.contains('maximized')) {
+                    gameLogPanel.classList.remove('maximized');
+                    btnMaximizeLog.textContent = '🗖';
+                    btnMaximizeLog.title = 'Phóng to';
+                } else {
+                    gameLogPanel.classList.remove('minimized');
+                    gameLogPanel.classList.add('maximized');
+                    btnMaximizeLog.textContent = '🗗';
+                    btnMaximizeLog.title = 'Thu nhỏ lại';
+                    btnMinimizeLog.textContent = '➖';
+                    btnMinimizeLog.title = 'Thu nhỏ';
+                }
+            });
+        }
+        
         // Sound toggle
         const btnSound = document.getElementById('btnSound');
         btnSound.addEventListener('click', () => {
@@ -343,17 +448,138 @@ class GameManager {
             AudioSynth.playClick();
         });
 
-        // Bet selector
-        const betSelect = document.getElementById('betSelect');
-        betSelect.addEventListener('change', (e) => {
-            this.betAmount = parseInt(e.target.value);
-            this.logMessage(`Mức cược thay đổi thành: ${this.betAmount.toLocaleString()} Xu`, 'system');
-            AudioSynth.playClick();
-        });
+        // Fullscreen toggle
+        const btnFullscreen = document.getElementById('btnFullscreen');
+        if (btnFullscreen) {
+            const docEl = document.documentElement;
+            
+            // Helper functions to enter/exit pseudo-fullscreen
+            const enterPseudoFullscreen = () => {
+                if (!document.body.classList.contains('pseudo-fullscreen')) {
+                    document.body.classList.add('pseudo-fullscreen');
+                    btnFullscreen.textContent = '⛶ Thu nhỏ';
+                    this.logMessage("Đã bật chế độ phóng to màn hình (Tối ưu thiết bị).", "system");
+                    setTimeout(() => this.adjustMatScale(), 100);
+                }
+            };
+
+            const exitPseudoFullscreen = () => {
+                if (document.body.classList.contains('pseudo-fullscreen')) {
+                    document.body.classList.remove('pseudo-fullscreen');
+                    btnFullscreen.textContent = '⛶ Full screen';
+                    this.logMessage("Đã tắt chế độ phóng to màn hình.", "system");
+                    setTimeout(() => this.adjustMatScale(), 100);
+                }
+            };
+
+            const isNativeFullscreen = () => {
+                return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            };
+
+            const isPseudoFullscreen = () => {
+                return document.body.classList.contains('pseudo-fullscreen');
+            };
+
+            btnFullscreen.addEventListener('click', () => {
+                AudioSynth.playClick();
+                
+                // If currently in pseudo-fullscreen, exit it
+                if (isPseudoFullscreen()) {
+                    exitPseudoFullscreen();
+                    return;
+                }
+                
+                // If currently in native fullscreen, exit it
+                if (isNativeFullscreen()) {
+                    try {
+                        if (document.exitFullscreen) {
+                            document.exitFullscreen();
+                        } else if (document.webkitExitFullscreen) {
+                            document.webkitExitFullscreen();
+                        } else if (document.mozCancelFullScreen) {
+                            document.mozCancelFullScreen();
+                        } else if (document.msExitFullscreen) {
+                            document.msExitFullscreen();
+                        }
+                    } catch (err) {
+                        console.warn("Failed to exit native fullscreen, trying pseudo-fullscreen:", err);
+                        exitPseudoFullscreen();
+                    }
+                    return;
+                }
+
+                // Try to enter native fullscreen
+                let nativePromise = null;
+                let methodCalled = false;
+                try {
+                    if (docEl.requestFullscreen) {
+                        nativePromise = docEl.requestFullscreen();
+                        methodCalled = true;
+                    } else if (docEl.webkitRequestFullscreen) {
+                        nativePromise = docEl.webkitRequestFullscreen();
+                        methodCalled = true;
+                    } else if (docEl.mozRequestFullScreen) {
+                        nativePromise = docEl.mozRequestFullScreen();
+                        methodCalled = true;
+                    } else if (docEl.msRequestFullscreen) {
+                        nativePromise = docEl.msRequestFullscreen();
+                        methodCalled = true;
+                    }
+                } catch (err) {
+                    console.warn("Native fullscreen rejected/threw error, falling back to pseudo:", err);
+                    enterPseudoFullscreen();
+                    return;
+                }
+
+                if (methodCalled) {
+                    if (nativePromise && typeof nativePromise.catch === 'function') {
+                        nativePromise.catch(err => {
+                            console.warn("Native fullscreen promise rejected, falling back to pseudo:", err);
+                            enterPseudoFullscreen();
+                        });
+                    }
+                    // For browsers that don't return a promise but fail, the fullscreenerror events will handle it.
+                } else {
+                    // No native fullscreen support at all (e.g., iPhone Safari)
+                    enterPseudoFullscreen();
+                }
+            });
+
+            const onFSChange = () => {
+                if (isNativeFullscreen()) {
+                    btnFullscreen.textContent = '⛶ Thu nhỏ';
+                    // Disable pseudo-fullscreen if native succeeds
+                    document.body.classList.remove('pseudo-fullscreen');
+                } else {
+                    btnFullscreen.textContent = '⛶ Full screen';
+                }
+                setTimeout(() => this.adjustMatScale(), 100);
+            };
+
+            const onFSError = (e) => {
+                console.warn("Native fullscreen error event triggered, falling back to pseudo-fullscreen:", e);
+                if (!isNativeFullscreen()) {
+                    enterPseudoFullscreen();
+                }
+            };
+
+            document.addEventListener('fullscreenchange', onFSChange);
+            document.addEventListener('webkitfullscreenchange', onFSChange);
+            document.addEventListener('mozfullscreenchange', onFSChange);
+            document.addEventListener('MSFullscreenChange', onFSChange);
+
+            document.addEventListener('fullscreenerror', onFSError);
+            document.addEventListener('webkitfullscreenerror', onFSError);
+            document.addEventListener('mozfullscreenerror', onFSError);
+            document.addEventListener('MSFullscreenError', onFSError);
+        }
+
+        // Bet selector removed in point system
 
         // Event for clicking the stock pile
         document.getElementById('drawPile').addEventListener('click', () => {
-            if (this.currentTurnIdx === 0 && this.turnStep === 'ACTION' && !document.getElementById('btnDraw').disabled) {
+            const canDraw = (this.currentTurnIdx === 0 && !this.isReturningDiscards && this.turnStep === 'ACTION' && this.drawPile.length > 0);
+            if (canDraw) {
                 this.playerDraw();
             }
         });
@@ -374,6 +600,58 @@ class GameManager {
                 }
             }
         });
+
+        // Mat scaling for mobile devices
+        window.addEventListener('resize', () => this.adjustMatScale());
+        this.adjustMatScale();
+        // Setup online controls (Socket.IO) if present
+        try { this.setupOnlineControls(); } catch(e) { /* ignore if not available yet */ }
+    }
+
+    adjustMatScale() {
+        const mat = document.querySelector('.straw-mat');
+        if (!mat) return;
+        
+        this.baseWidth = 760;
+        this.baseHeight = 520;
+        
+        const isMobile = window.innerWidth < 768 || window.innerHeight < 500;
+        const isPseudo = document.body.classList.contains('pseudo-fullscreen');
+        const isNative = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+        const isFullscreen = isPseudo || isNative;
+        
+        let padX = 20;
+        let padY = 180;
+        let translateY = 0;
+        
+        if (isMobile) {
+            padX = 10;
+            this.baseWidth = 990; // Tăng chiều ngang chiếu lên 30% ở chế độ điện thoại
+            // Check if mobile is in landscape mode
+            const isLandscape = window.innerHeight < window.innerWidth;
+            if (isLandscape) {
+                padY = isFullscreen ? 120 : 150;
+                translateY = isFullscreen ? -20 : -15;
+            } else {
+                padY = isFullscreen ? 100 : 140;
+                translateY = 0;
+                this.baseHeight = 650; // Tăng chiều dọc chiếu lên 25% ở chế độ dọc
+            }
+        } else if (isFullscreen) {
+            padY = 110;
+        }
+        
+        const scaleX = window.innerWidth / (this.baseWidth + padX);
+        const scaleY = window.innerHeight / (this.baseHeight + padY);
+        
+        let scale = Math.min(scaleX, scaleY);
+        if (isMobile) {
+            scale *= 0.8; // Zoom tổng thể thêm 40% trên di động
+        } else {
+            if (scale > 1) scale = 1;
+        }
+        
+        mat.style.transform = `translateY(${translateY}px) scale(${scale})`;
     }
 
     logMessage(text, type = 'system') {
@@ -410,16 +688,40 @@ class GameManager {
         this.createFloatingText(text, centerX, centerY, isRed, isGreen);
     }
 
+    updateSingleAvatarForMeldPhase(playerIdx) {
+        const zone = document.getElementById(`playerZone-${playerIdx}`);
+        const avatarEl = (zone && typeof zone.querySelector === 'function') ? zone.querySelector('.avatar') : null;
+        if (avatarEl) {
+            let order = (playerIdx - this.meldStartIdx) * this.playDirection;
+            order = (order % 4 + 4) % 4 + 1;
+            avatarEl.textContent = order;
+        }
+    }
+
+    restoreOriginalAvatars() {
+        const originalLabels = ["Ta", "LH", "B3", "CH"];
+        for (let i = 0; i < 4; i++) {
+            const zone = document.getElementById(`playerZone-${i}`);
+            const avatarEl = (zone && typeof zone.querySelector === 'function') ? zone.querySelector('.avatar') : null;
+            if (avatarEl) {
+                avatarEl.textContent = originalLabels[i];
+            }
+        }
+    }
+
     manualRestart() {
         AudioSynth.init();
         AudioSynth.playClick();
-        if (confirm("Bạn có muốn bắt đầu ván mới hoàn toàn? Tiền xu sẽ được khôi phục.")) {
-            this.players.forEach(p => p.balance = 1000000);
+        if (confirm("Bạn có muốn bắt đầu ván mới hoàn toàn? Điểm số sẽ được khôi phục về 0.")) {
+            this.players.forEach(p => p.balance = 0);
+            this.dealerIdx = 0;
+            this.playDirection = 1;
             this.resetGame();
         }
     }
 
     resetGame() {
+        this.restoreOriginalAvatars();
         this.players.forEach(p => p.reset());
         this.deck = [];
         this.drawPile = [];
@@ -430,10 +732,15 @@ class GameManager {
         this.isDrawingOrEating = false;
         this.isReturningDiscards = false;
         this.meldStartIdx = 0;
+        this.hasStartedDọnRác = false;
         this.roundNum = 1;
         this.turnStep = 'DEALING';
         this.chotRound = false;
         this.consecutiveEatenCounts = [0, 0, 0, 0];
+        if (this.autoSendTimeout) {
+            clearTimeout(this.autoSendTimeout);
+            this.autoSendTimeout = null;
+        }
         
         // Dealer moves to next player (or starts at 0)
         this.currentTurnIdx = this.dealerIdx;
@@ -455,6 +762,15 @@ class GameManager {
 
     startNextGame() {
         AudioSynth.playClick();
+        if (this.isViewingHistoryRecord) {
+            document.getElementById('gameOverModal').classList.remove('show');
+            this.isViewingHistoryRecord = false;
+            if (this.returnToHistoryOnClose) {
+                document.getElementById('historyModal').classList.add('show');
+                this.returnToHistoryOnClose = false;
+            }
+            return;
+        }
         this.resetGame();
     }
 
@@ -487,7 +803,7 @@ class GameManager {
                 dealOrder.push(curr);
                 dealtCounts[curr]++;
             }
-            curr = (curr + 1) % 4;
+            curr = (curr + this.playDirection + 4) % 4;
         }
 
         // Remaining deck goes to draw pile
@@ -642,10 +958,15 @@ class GameManager {
         cardDiv.className = `card-3d ${card.cssClass} ${isFlipped ? '' : 'flipped'}`;
         cardDiv.id = card.id;
 
+        const isFaceCard = ['J', 'Q', 'K'].includes(card.symbol);
+        const bgImageHTML = isFaceCard ? `<img class="card-bg-image" src="${card.symbol}.jpg" onerror="this.onerror=null; this.src='${card.symbol.toLowerCase()}.jpg';" />` : '';
+        const centerSuitHTML = isFaceCard ? '' : `<div class="card-center-suit">${card.suitSymbol}</div>`;
+
         cardDiv.innerHTML = `
             <div class="card-inner">
                 <div class="card-face card-face-back"></div>
                 <div class="card-face card-face-front">
+                    ${bgImageHTML}
                     <div class="card-corner top-left">
                         <span>${card.symbol}</span>
                         <span class="suit-mini">${card.suitSymbol}</span>
@@ -654,7 +975,7 @@ class GameManager {
                         <span>${card.symbol}</span>
                         <span class="suit-mini">${card.suitSymbol}</span>
                     </div>
-                    <div class="card-center-suit">${card.suitSymbol}</div>
+                    ${centerSuitHTML}
                     <div class="card-corner bottom-left">
                         <span>${card.symbol}</span>
                         <span class="suit-mini">${card.suitSymbol}</span>
@@ -760,7 +1081,7 @@ class GameManager {
     }
 
     renderAIHands() {
-        const showFront = (this.turnStep === 'LAY_MELDS' || this.turnStep === 'SEND_CARDS' || this.turnStep === 'GAME_OVER');
+        const showFront = this.hasStartedDọnRác || (this.turnStep === 'GAME_OVER');
         
         // East AI (Player 1) - Stacked vertically
         const container1 = document.getElementById('hand-1');
@@ -804,22 +1125,26 @@ class GameManager {
             slotCards.forEach((card, pileIdx) => {
                 const cardEl = this.createCardElement(card, true);
                 let x = 0, y = 0, rot = 0;
+                let visualIdx = slotIdx;
+                if (this.playDirection === -1) {
+                    visualIdx = (slotIdx - 2 + 4) % 4;
+                }
                 
-                if (slotIdx === 0) { // Bottom plays to Right (Player 1)
-                    x = 350 - Math.abs(pileIdx - 1.5) * 12;
-                    y = 220 + pileIdx * 32;
+                if (visualIdx === 0) { // Bottom plays to Right
+                    x = 422 + (this.baseWidth - 760) - Math.abs(pileIdx - 1.5) * 12;
+                    y = 220 + (this.baseHeight - 520) + pileIdx * 32;
                     rot = (pileIdx - 1.5) * 12;
-                } else if (slotIdx === 1) { // Right plays to Top (Player 2)
-                    x = 240 + pileIdx * 32;
+                } else if (visualIdx === 1) { // Right plays to Top
+                    x = 240 + (this.baseWidth - 760) + pileIdx * 32;
                     y = 20 + Math.abs(pileIdx - 1.5) * 12;
                     rot = (pileIdx - 1.5) * 12;
-                } else if (slotIdx === 2) { // Top plays to Left (Player 3)
+                } else if (visualIdx === 2) { // Top plays to Left
                     x = 40 + Math.abs(pileIdx - 1.5) * 12;
                     y = 20 + pileIdx * 32;
                     rot = -(pileIdx - 1.5) * 12;
-                } else if (slotIdx === 3) { // Left plays to Bottom (Player 0)
-                    x = 70 + pileIdx * 32;
-                    y = 300 - Math.abs(pileIdx - 1.5) * 12;
+                } else if (visualIdx === 3) { // Left plays to Bottom
+                    x = 100 + pileIdx * 32;
+                    y = 275 + (this.baseHeight - 520) - Math.abs(pileIdx - 1.5) * 12;
                     rot = -(pileIdx - 1.5) * 12;
                 }
 
@@ -873,7 +1198,7 @@ class GameManager {
                 }
                 
                 sortedEatenPhom.forEach((card, cardIdx) => {
-                    let showFront = (cardIdx === 0) || (this.turnStep === 'LAY_MELDS' || this.turnStep === 'SEND_CARDS' || this.turnStep === 'GAME_OVER');
+                    let showFront = (cardIdx === 0) || this.hasStartedDọnRác || (this.turnStep === 'GAME_OVER');
                     const cardEl = this.createCardElement(card, showFront);
                     
                     let angle = 0;
@@ -962,7 +1287,7 @@ class GameManager {
                         e.preventDefault();
                         const cards = groupDiv.querySelectorAll('.card-3d');
                         cards.forEach((cardEl, cIdx) => {
-                            let showFront = (cIdx === 0) || (this.turnStep === 'LAY_MELDS' || this.turnStep === 'SEND_CARDS' || this.turnStep === 'GAME_OVER');
+                            let showFront = (cIdx === 0) || this.hasStartedDọnRác || (this.turnStep === 'GAME_OVER');
                             if (!showFront) {
                                 cardEl.classList.add('flipped');
                             }
@@ -1013,7 +1338,8 @@ class GameManager {
             const zone = document.getElementById(`playerZone-${i}`);
             const balanceEl = document.getElementById(`balance-${i}`);
             
-            balanceEl.textContent = `${this.players[i].balance.toLocaleString()} Xu`;
+            let currentPoints = this.players[i].matchEatPoints + this.players[i].matchPlacementPoints;
+            balanceEl.textContent = `${currentPoints > 0 ? '+' : ''}${currentPoints} Điểm`;
             
             if (this.currentTurnIdx === i) {
                 zone.classList.add('active');
@@ -1030,23 +1356,17 @@ class GameManager {
 
         // Active state of buttons for User (player 0)
         const isUserTurn = (this.currentTurnIdx === 0);
-        const btnDraw = document.getElementById('btnDraw');
         const btnEat = document.getElementById('btnEat');
         const btnDiscard = document.getElementById('btnDiscard');
         const btnLayMelds = document.getElementById('btnLayMelds');
-        const btnSendCards = document.getElementById('btnSendCards');
 
         // Reset all to disabled initially
-        btnDraw.disabled = true;
-        btnEat.disabled = true;
-        btnDiscard.disabled = true;
-        btnLayMelds.disabled = true;
-        btnSendCards.disabled = true;
+        if (btnEat) btnEat.disabled = true;
+        if (btnDiscard) btnDiscard.disabled = true;
+        if (btnLayMelds) btnLayMelds.disabled = true;
 
         if (isUserTurn && !this.isReturningDiscards) {
             if (this.turnStep === 'ACTION') {
-                btnDraw.disabled = false;
-                
                 // Can user eat the last discarded card?
                 if (this.lastDiscardedCard && this.lastDiscardedPlayerIdx !== 0) {
                     if (this.selectedEatCardIds && (this.selectedEatCardIds.length === 2 || this.selectedEatCardIds.length === 3)) {
@@ -1059,12 +1379,55 @@ class GameManager {
             } else if (this.turnStep === 'DISCARD') {
                 // Discard is active if a card is selected
                 if (this.selectedCardId !== null) {
-                    btnDiscard.disabled = false;
+                    if (btnDiscard) btnDiscard.disabled = false;
+                }
+                // Check if user is eligible to U (0 or 1 rubbish card remaining in their 10-card hand)
+                let partition = getBestPartitions(this.players[0].hand);
+                if (partition.racs.length <= 1) {
+                    if (btnLayMelds) btnLayMelds.disabled = false;
                 }
             } else if (this.turnStep === 'LAY_MELDS') {
-                btnLayMelds.disabled = false;
-            } else if (this.turnStep === 'SEND_CARDS') {
-                btnSendCards.disabled = false;
+                if (btnLayMelds) btnLayMelds.disabled = false;
+            }
+        }
+
+        // Toggle U highlight class on btnLayMelds
+        let isEligibleU = false;
+        if (isUserTurn && !this.isReturningDiscards && this.turnStep === 'DISCARD') {
+            let partition = getBestPartitions(this.players[0].hand);
+            if (partition.racs.length <= 1) {
+                isEligibleU = true;
+            }
+        }
+        if (btnLayMelds) {
+            if (isEligibleU) {
+                btnLayMelds.classList.add('highlight-u');
+            } else {
+                btnLayMelds.classList.remove('highlight-u');
+            }
+        }
+
+        // Toggle active play direction indicators
+        const dirCCW = document.getElementById('dirCCW');
+        const dirCW = document.getElementById('dirCW');
+        if (dirCCW && dirCW) {
+            if (this.playDirection === 1) {
+                dirCCW.classList.add('active');
+                dirCW.classList.remove('active');
+            } else {
+                dirCW.classList.add('active');
+                dirCCW.classList.remove('active');
+            }
+        }
+
+        // Rumble stack effect when user can draw
+        const drawStack = document.getElementById('drawStack');
+        if (drawStack) {
+            const canDraw = isUserTurn && !this.isReturningDiscards && this.turnStep === 'ACTION' && this.drawPile.length > 0;
+            if (canDraw) {
+                drawStack.classList.add('rumble');
+            } else {
+                drawStack.classList.remove('rumble');
             }
         }
     }
@@ -1106,22 +1469,7 @@ class GameManager {
         const tempCard = document.createElement('div');
         tempCard.className = `card-3d ${card.cssClass} ${showFront ? '' : 'flipped'} animating-card`;
         
-        tempCard.innerHTML = `
-            <div class="card-inner">
-                <div class="card-face card-face-back"></div>
-                <div class="card-face card-face-front">
-                    <div class="card-corner">
-                        <span>${card.symbol}</span>
-                        <span class="suit-mini">${card.suitSymbol}</span>
-                    </div>
-                    <div class="card-center-suit">${card.suitSymbol}</div>
-                    <div class="card-corner" style="transform: rotate(180deg);">
-                        <span>${card.symbol}</span>
-                        <span class="suit-mini">${card.suitSymbol}</span>
-                    </div>
-                </div>
-            </div>
-        `;
+        tempCard.innerHTML = this.createCardElement(card, showFront).innerHTML;
         
         tempCard.style.position = 'fixed';
         tempCard.style.left = `${startRect.left}px`;
@@ -1148,13 +1496,228 @@ class GameManager {
         }, duration);
     }
 
+    animateULayMelds(playerIdx, callback) {
+        let player = this.players[playerIdx];
+        player.hasLaidMelds = true; // Hạ phỏm khi Ù
+        let partition = getBestPartitions(player.hand);
+        let animationsToRun = [];
+
+        if (partition.phoms.length > 0) {
+            // Collect source positions of the cards in their hand
+            partition.phoms.forEach(phom => {
+                phom.forEach(c => {
+                    const cardEl = document.getElementById(c.id);
+                    const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
+                    animationsToRun.push({
+                        card: c,
+                        startRect: startRect
+                    });
+                });
+            });
+
+            // Update the data model
+            player.melds = [...player.melds, ...partition.phoms];
+            partition.phoms.forEach(phom => {
+                phom.forEach(c => player.removeCard(c.id));
+            });
+
+            // Render hand and melds to set target DOM positions
+            if (playerIdx === 0) {
+                this.renderPlayerHand();
+            } else {
+                this.renderAIHands();
+            }
+            this.renderMelds();
+
+            // Play the meld sound
+            AudioSynth.playMeld();
+
+            let animCount = animationsToRun.length;
+            let finishedCount = 0;
+
+            animationsToRun.forEach(anim => {
+                const targetEl = document.getElementById(anim.card.id);
+                if (anim.startRect && targetEl) {
+                    targetEl.style.opacity = '0';
+                    const endRect = targetEl.getBoundingClientRect();
+                    AudioSynth.playSwoosh();
+                    this.animateCardFlying(anim.card, anim.startRect, endRect, true, () => {
+                        targetEl.style.opacity = '1';
+                        AudioSynth.playClick();
+                        this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, '#dfb76c');
+
+                        finishedCount++;
+                        if (finishedCount === animCount) {
+                            if (callback) callback();
+                        }
+                    }, 550);
+                } else {
+                    finishedCount++;
+                    if (finishedCount === animCount) {
+                        if (callback) callback();
+                    }
+                }
+            });
+        } else {
+            if (callback) callback();
+        }
+    }
+
+    // --- ONLINE / SOCKET.IO SUPPORT ---
+    setupOnlineControls() {
+        this.online = false;
+        this.socket = null;
+        this.roomId = null;
+        this.seatIdx = null;
+
+        const btnCreate = document.getElementById('btnCreateRoom');
+        const btnJoin = document.getElementById('btnJoinRoom');
+        const btnStart = document.getElementById('btnStartOnline');
+        const nameInput = document.getElementById('playerName');
+        const roomInput = document.getElementById('roomIdInput');
+        const roomStatus = document.getElementById('roomStatus');
+
+        const ensureSocket = () => {
+            if (!this.socket) {
+                if (typeof io === 'undefined') {
+                    this.logMessage('Socket.IO client not found. Chạy server và mở trang qua http://localhost:3000', 'system');
+                    return null;
+                }
+                this.socket = io();
+
+                this.socket.on('roomUpdate', (data) => {
+                    roomStatus.textContent = `Phòng: ${this.roomId || ''} — Người: ${data.players.map(p=>p.name).join(', ')}`;
+                });
+
+                this.socket.on('dealHands', (data) => {
+                    // data: {hand, seatIdx, dealerIdx, players}
+                    this.online = true;
+                    this.roomId = this.roomId || roomInput.value;
+                    this.seatIdx = data.seatIdx;
+                    // initialize players array to match server order
+                    this.players = [];
+                    for (let i = 0; i < data.players.length; i++) {
+                        const isMe = (i === this.seatIdx);
+                        this.players.push(new Player(i, data.players[i].name || (`P${i}`), 0, !isMe));
+                        if (isMe) {
+                            this.players[i].hand = data.hand.map(c => new Card(c.suit, c.rankIndex));
+                        } else {
+                            this.players[i].hand = [];
+                        }
+                    }
+                    this.dealerIdx = data.dealerIdx;
+                    this.currentTurnIdx = data.dealerIdx;
+                    this.drawPile = this.drawPile || [];
+                    this.renderAll();
+                    this.logMessage('Đã nhận bài từ server. Trận đấu bắt đầu (online).', 'system');
+                });
+
+                this.socket.on('handUpdate', (data) => {
+                    if (this.seatIdx !== null) {
+                        this.players[this.seatIdx].hand = data.hand.map(c => new Card(c.suit, c.rankIndex));
+                        this.renderPlayerHand();
+                    }
+                });
+
+                this.socket.on('stateUpdate', (data) => {
+                    // Public info: drawPileCount, tableDiscards, currentTurnIdx, lastDiscardedCard, playersHandsCounts
+                    if (data.drawPileCount !== undefined) {
+                        // We cannot know exact cards in drawPile (server keeps), but update count
+                        this.drawPile = new Array(data.drawPileCount);
+                    }
+                    if (data.tableDiscards) {
+                        // convert to Card objects for rendering where possible
+                        this.tableDiscards = data.tableDiscards.map(arr => arr.map(c => new Card(c.suit, c.rankIndex)));
+                    }
+                    if (data.playersHandsCounts) {
+                        // For other players, create placeholder back-cards to show counts
+                        data.playersHandsCounts.forEach((count, idx) => {
+                            if (idx === this.seatIdx) return; // skip our hand
+                            const arr = [];
+                            for (let k = 0; k < count; k++) {
+                                arr.push({ id: `back-${idx}-${k}`, cssClass: 'card-back', symbol: '', suitSymbol: '' });
+                            }
+                            if (!this.players[idx]) this.players[idx] = new Player(idx, `P${idx}`, 0, true);
+                            this.players[idx].hand = arr;
+                        });
+                    }
+                    if (data.currentTurnIdx !== undefined) this.currentTurnIdx = data.currentTurnIdx;
+                    if (data.lastDiscardedCard) {
+                        this.lastDiscardedCard = new Card(data.lastDiscardedCard.suit, data.lastDiscardedCard.rankIndex);
+                        // find which player it belongs to by searching tableDiscards
+                        this.lastDiscardedPlayerIdx = (this.tableDiscards || []).findIndex(slot => slot.find(c => c.id === this.lastDiscardedCard.id) !== undefined);
+                    }
+                    this.renderAll();
+                    this.updateHUD();
+                });
+
+                this.socket.on('connect_error', (err) => {
+                    this.logMessage('Không thể kết nối tới server: ' + err.message, 'system');
+                });
+            }
+            return this.socket;
+        };
+
+        if (btnCreate) btnCreate.addEventListener('click', () => {
+            const sock = ensureSocket();
+            if (!sock) return;
+            const name = nameInput.value || 'Bạn';
+            const roomId = roomInput.value || undefined;
+            sock.emit('createRoom', {roomId, name}, (res) => {
+                if (res && res.roomId) {
+                    this.roomId = res.roomId;
+                    roomStatus.textContent = `Tạo phòng: ${this.roomId}`;
+                }
+            });
+        });
+
+        if (btnJoin) btnJoin.addEventListener('click', () => {
+            const sock = ensureSocket();
+            if (!sock) return;
+            const name = nameInput.value || 'Bạn';
+            const roomId = roomInput.value;
+            if (!roomId) { this.logMessage('Vui lòng nhập mã phòng để tham gia.', 'system'); return; }
+            sock.emit('joinRoom', {roomId, name}, (res) => {
+                if (res && res.error) {
+                    this.logMessage(res.error, 'system');
+                } else {
+                    this.roomId = roomId;
+                    roomStatus.textContent = `Đã tham gia: ${this.roomId}`;
+                }
+            });
+        });
+
+        if (btnStart) btnStart.addEventListener('click', () => {
+            const sock = ensureSocket();
+            if (!sock) return;
+            if (!this.roomId) { this.logMessage('Chưa có phòng (tạo hoặc tham gia trước).', 'system'); return; }
+            sock.emit('startGame', {roomId: this.roomId}, (res) => {
+                if (res && res.error) this.logMessage(res.error, 'system');
+            });
+        });
+    }
+
     // --- TURN ACTIONS ---
 
     playerDraw() {
         if (this.currentTurnIdx !== 0 || this.turnStep !== 'ACTION') return;
         if (this.isDrawingOrEating) return;
         this.isDrawingOrEating = true;
-        
+
+        // If playing online, ask server to draw
+        if (this.online && this.socket && this.roomId && this.seatIdx !== null) {
+            this.socket.emit('playerDraw', { roomId: this.roomId, seatIdx: this.seatIdx }, (res) => {
+                if (res && res.error) {
+                    this.logMessage(res.error, 'system');
+                    this.isDrawingOrEating = false;
+                } else {
+                    // server will emit handUpdate/stateUpdate
+                    this.isDrawingOrEating = false;
+                }
+            });
+            return;
+        }
+
         if (this.drawPile.length === 0) {
             this.logMessage(`Nọc đã hết bài. Bắt đầu hạ phỏm!`, 'system');
             this.startMeldPhase();
@@ -1163,6 +1726,7 @@ class GameManager {
         }
         
         this.selectedEatCardIds = []; // Clear eat selections
+        this.selectedCardId = null; // Clear discard selection immediately
         
         const drawPileEl = document.getElementById('drawPile');
         const startRect = drawPileEl ? drawPileEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
@@ -1235,6 +1799,9 @@ class GameManager {
             this.tableDiscards[eatenSlotIdx].splice(idx, 1);
         }
         
+        // Immediate penalty payment
+        this.handleEatPenalty(this.lastDiscardedPlayerIdx, 0);
+
         this.applyEatShift(eatenSlotIdx);
         
         let eatenCard = this.lastDiscardedCard;
@@ -1248,10 +1815,8 @@ class GameManager {
         this.logMessage(`Bạn đã ăn lá ${eatenCard.name} từ ${sourcePlayer.name}!`, 'player');
         this.showStatusBubble(0, "Ăn bài!", 1500);
 
-        // Immediate penalty payment
-        this.handleEatPenalty(this.lastDiscardedPlayerIdx, 0);
-
         this.selectedEatCardIds = []; // Clear eat selections
+        this.selectedCardId = null; // Clear discard selection immediately
 
         this.renderDiscardArea();
         this.renderEatenCards();
@@ -1291,6 +1856,16 @@ class GameManager {
 
         const cardEl = document.getElementById(this.selectedCardId);
         const startRect = cardEl ? cardEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
+        // If online, emit discard to server and let it update state
+        if (this.online && this.socket && this.roomId && this.seatIdx !== null) {
+            const cardObj = this.players[0].hand.find(c => c.id === this.selectedCardId);
+            if (!cardObj) return;
+            AudioSynth.playClick();
+            this.socket.emit('playerDiscard', { roomId: this.roomId, seatIdx: this.seatIdx, card: { id: cardObj.id } }, (res) => {
+                if (res && res.error) this.logMessage(res.error, 'system');
+            });
+            return;
+        }
 
         AudioSynth.playClick();
         
@@ -1324,7 +1899,9 @@ class GameManager {
                         this.players[0].isU = true;
                         this.logMessage(`Bạn đã Ù!`, 'win');
                         this.showStatusBubble(0, "Ù!!! 🎉", 3000);
-                        this.endGame();
+                        this.animateULayMelds(0, () => {
+                            this.endGame();
+                        });
                         return;
                     }
 
@@ -1338,11 +1915,74 @@ class GameManager {
     }
 
     playerLayMelds() {
-        if (this.currentTurnIdx !== 0 || this.turnStep !== 'LAY_MELDS') return;
+        if (this.currentTurnIdx !== 0) return;
+        
+        // If player clicks "Hạ phỏm" during DISCARD turn step to U
+        if (this.turnStep === 'DISCARD') {
+            let partition = getBestPartitions(this.players[0].hand);
+            if (partition.racs.length <= 1) {
+                // Yes, they can U!
+                this.players[0].isU = true;
+                
+                let rubbishCard = null;
+                let startRect = null;
+                if (partition.racs.length === 1) {
+                    rubbishCard = partition.racs[0];
+                    const cardEl = document.getElementById(rubbishCard.id);
+                    startRect = cardEl ? cardEl.getBoundingClientRect() : null;
+                    
+                    // Modify data model for discard
+                    this.players[0].removeCard(rubbishCard.id);
+                    this.tableDiscards[0].push(rubbishCard);
+                    this.players[0].discardCount++;
+                    this.lastDiscardedCard = rubbishCard;
+                    this.lastDiscardedPlayerIdx = 0;
+                    this.logMessage(`Bạn đã đánh lá ${rubbishCard.name} và Ù!`, 'player');
+                } else {
+                    this.logMessage(`Bạn đã Ù (Ù khan)!`, 'player');
+                }
+                
+                this.logMessage(`${this.players[0].name} đã Ù!`, 'alert');
+                this.showStatusBubble(0, "Ù! 🎉", 3000);
+                
+                const performMeldAnimation = () => {
+                    this.animateULayMelds(0, () => {
+                        this.endGame();
+                    });
+                };
+                
+                if (rubbishCard && startRect) {
+                    this.renderPlayerHand();
+                    this.renderDiscardArea();
+                    
+                    const targetEl = document.getElementById(rubbishCard.id);
+                    if (targetEl) {
+                        targetEl.style.opacity = '0';
+                        const endRect = targetEl.getBoundingClientRect();
+                        AudioSynth.playSwoosh();
+                        this.animateCardFlying(rubbishCard, startRect, endRect, true, () => {
+                            targetEl.style.opacity = '1';
+                            AudioSynth.playClick();
+                            this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, '#1a1a1a');
+                            
+                            performMeldAnimation();
+                        }, 550);
+                    } else {
+                        performMeldAnimation();
+                    }
+                } else {
+                    performMeldAnimation();
+                }
+                return;
+            }
+        }
+
+        if (this.turnStep !== 'LAY_MELDS') return;
         
         this.startPlayerMeldPhase(0, () => {
             AudioSynth.playClick();
             this.players[0].melds = [];
+            this.players[0].hasLaidMelds = true; // Đã hạ bài
             
             let partition = getBestPartitions(this.players[0].hand);
             let totalMeldsCount = this.players[0].eaten.length + partition.phoms.length;
@@ -1386,13 +2026,18 @@ class GameManager {
             this.renderMelds();
 
             const proceed = () => {
+                if (this.players[0].hand.length === 0) {
+                    this.players[0].isU = true;
+                    this.logMessage(`Bạn đã Ù (Ù hạ hết)!`, 'win');
+                    this.showStatusBubble(0, "Ù!!! 🎉", 3000);
+                    this.endGame();
+                    return;
+                }
                 this.turnStep = 'SEND_CARDS';
                 this.updateHUD();
                 
-                let sends = this.findPossibleSends(0);
-                if (sends.length === 0 || this.players[0].isMom) {
-                    setTimeout(() => this.playerSendCards(), 1000);
-                }
+                // Tự động gọi gửi bài sau 1.2 giây
+                this.autoSendTimeout = setTimeout(() => this.playerSendCards(), 1200);
             };
 
             if (animationsToRun.length > 0) {
@@ -1431,47 +2076,82 @@ class GameManager {
     playerSendCards() {
         if (this.currentTurnIdx !== 0 || this.turnStep !== 'SEND_CARDS') return;
 
-        let sends = this.findPossibleSends(0);
-        let animationsToRun = [];
+        // Xóa bộ hẹn giờ nếu được gọi thủ công bằng nút bấm
+        if (this.autoSendTimeout) {
+            clearTimeout(this.autoSendTimeout);
+            this.autoSendTimeout = null;
+        }
 
-        if (sends.length > 0 && !this.players[0].isMom) {
-            sends.forEach(send => {
-                const cardEl = document.getElementById(send.card.id);
-                const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
+        let animationsToRun = [];
+        let hasNewSends = true;
+
+        // Vòng lặp tìm kiếm và thực hiện gửi bài liên tiếp (chained sends)
+        while (hasNewSends) {
+            let sends = this.findPossibleSends(0);
+            if (sends.length === 0 || this.players[0].isMom) {
+                hasNewSends = false;
+            } else {
+                let uniqueSends = [];
+                let seenCardIds = new Set();
                 
-                let removed = this.players[0].removeCard(send.card.id);
-                if (removed) {
-                    if (send.meldType === 'eaten') {
-                        this.players[send.targetPlayerIdx].eaten[send.meldIdx].push(removed);
-                    } else {
-                        this.players[send.targetPlayerIdx].melds[send.meldIdx].push(removed);
+                // Lọc để mỗi quân bài chỉ gửi đi 1 lần trong lượt quét này
+                for (let send of sends) {
+                    if (!seenCardIds.has(send.card.id)) {
+                        seenCardIds.add(send.card.id);
+                        uniqueSends.push(send);
                     }
-                    
-                    animationsToRun.push({
-                        card: removed,
-                        startRect: startRect
-                    });
-                    
-                    this.logMessage(`Bạn gửi lá ${removed.name} vào Phỏm của ${this.players[send.targetPlayerIdx].name}.`, 'player');
                 }
-            });
-            
-            if (animationsToRun.length > 0) {
-                AudioSynth.playClick();
-                this.showStatusBubble(0, `Gửi ${animationsToRun.length} lá!`, 2000);
+                
+                if (uniqueSends.length === 0) {
+                    hasNewSends = false;
+                } else {
+                    uniqueSends.forEach(send => {
+                        const cardEl = document.getElementById(send.card.id);
+                        const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
+                        
+                        let removed = this.players[0].removeCard(send.card.id);
+                        if (removed) {
+                            if (send.meldType === 'eaten') {
+                                this.players[send.targetPlayerIdx].eaten[send.meldIdx].push(removed);
+                            } else {
+                                this.players[send.targetPlayerIdx].melds[send.meldIdx].push(removed);
+                            }
+                            
+                            animationsToRun.push({
+                                card: removed,
+                                startRect: startRect
+                            });
+                            
+                            this.logMessage(`Bạn gửi lá ${removed.name} vào Phỏm của ${this.players[send.targetPlayerIdx].name}.`, 'player');
+                        }
+                    });
+                }
             }
+        }
+
+        if (animationsToRun.length > 0) {
+            AudioSynth.playClick();
+            this.showStatusBubble(0, `Gửi ${animationsToRun.length} lá!`, 2000);
         }
 
         this.renderPlayerHand();
         this.renderMelds();
 
         const proceed = () => {
-            let nextIdx = (this.currentTurnIdx + 1) % 4;
+            if (this.players[0].hand.length === 0) {
+                this.players[0].isU = true;
+                this.logMessage(`Bạn đã gửi hết bài và Ù!`, 'win');
+                this.showStatusBubble(0, "Ù!!! 🎉", 3000);
+                this.endGame();
+                return;
+            }
+            let nextIdx = (this.currentTurnIdx + this.playDirection + 4) % 4;
             if (nextIdx === this.meldStartIdx) {
                 this.endGame();
             } else {
                 this.currentTurnIdx = nextIdx;
                 this.turnStep = 'LAY_MELDS';
+                this.updateSingleAvatarForMeldPhase(nextIdx);
                 this.updateHUD();
                 if (nextIdx !== 0) {
                     this.startPlayerMeldPhase(nextIdx, () => {
@@ -1516,16 +2196,24 @@ class GameManager {
     // --- GAME FLOW LOGIC ---
 
     nextTurn() {
-        this.currentTurnIdx = (this.currentTurnIdx + 1) % 4;
+        let prevTurnIdx = this.currentTurnIdx;
+        this.currentTurnIdx = (this.currentTurnIdx + this.playDirection + 4) % 4;
         this.turnStep = 'ACTION';
-        this.selectedCardId = null; // Clear discard selection on turn change
-        this.selectedEatCardIds = []; // Clear selections on turn change
+        
+        if (prevTurnIdx === 0) {
+            this.selectedCardId = null; // Clear discard selection when user's turn ends
+            this.selectedEatCardIds = []; // Clear selections when user's turn ends
+        }
 
-        // Auto-select matching Cạ cards if the user can eat
-        if (this.currentTurnIdx === 0 && this.lastDiscardedCard && this.lastDiscardedPlayerIdx !== 0) {
-            let autoSelectIds = this.findValidEatCạ(0, this.lastDiscardedCard);
-            if (autoSelectIds) {
-                this.selectedEatCardIds = autoSelectIds;
+        // Auto-select matching Cạ cards if the user can eat when it becomes their turn
+        if (this.currentTurnIdx === 0) {
+            this.selectedEatCardIds = []; // Reset eat selections at start of user's turn
+            if (this.lastDiscardedCard && this.lastDiscardedPlayerIdx !== 0) {
+                let autoSelectIds = this.findValidEatCạ(0, this.lastDiscardedCard);
+                if (autoSelectIds) {
+                    this.selectedEatCardIds = autoSelectIds;
+                    this.selectedCardId = null; // Clear pre-selected discard card to avoid double highlighting
+                }
             }
         }
         
@@ -1555,15 +2243,19 @@ class GameManager {
     }
 
     startPlayerMeldPhase(playerIdx, callback) {
-        const discardIdx = (playerIdx + 3) % 4; // Target the discard pile physically located in front of playerIdx
+        this.hasStartedDọnRác = true;
+        const discardIdx = (playerIdx - this.playDirection + 4) % 4; // Target the discard pile physically located in front of playerIdx
         const cards = this.tableDiscards[discardIdx] || [];
         if (cards.length === 0) {
             callback();
             return;
         }
 
+        this.showStatusBubble(playerIdx, "Dọn rác", 1500);
         this.isReturningDiscards = true;
         this.updateHUD();
+        this.renderAIHands();
+        this.renderMelds();
 
         // 1. Flip all discard cards face down simultaneously
         cards.forEach(card => {
@@ -1623,10 +2315,13 @@ class GameManager {
 
     startMeldPhase() {
         // Lay phom in turn order: start with the player discarded the last card of the game (in case it wasn't eaten)
-        this.meldStartIdx = (this.lastDiscardedPlayerIdx + 1) % 4;
+        this.meldStartIdx = (this.lastDiscardedPlayerIdx + this.playDirection + 4) % 4;
         this.currentTurnIdx = this.meldStartIdx;
         this.turnStep = 'LAY_MELDS';
         this.logMessage(`--- HẠ PHỎM ---`, 'system');
+        
+        this.updateSingleAvatarForMeldPhase(this.currentTurnIdx);
+        
         this.updateHUD();
         this.renderAll();
         
@@ -1685,6 +2380,8 @@ class GameManager {
                     this.tableDiscards[eatenSlotIdx].splice(idx, 1);
                 }
                 
+                this.handleEatPenalty(this.lastDiscardedPlayerIdx, this.currentTurnIdx);
+
                 this.applyEatShift(eatenSlotIdx);
                 
                 // Remove the Cạ cards from AI hand
@@ -1696,8 +2393,6 @@ class GameManager {
                 
                 this.logMessage(`${ai.name} đã ăn lá ${eatenCard.name} từ ${sourcePlayer.name}!`, 'ai');
                 this.showStatusBubble(this.currentTurnIdx, "Ăn bài!", 1500);
-                
-                this.handleEatPenalty(this.lastDiscardedPlayerIdx, this.currentTurnIdx);
                 
                 this.lastDiscardedCard = null;
                 this.lastDiscardedPlayerIdx = -1;
@@ -1775,7 +2470,9 @@ class GameManager {
             ai.isU = true;
             this.logMessage(`${ai.name} đã Ù!`, 'alert');
             this.showStatusBubble(this.currentTurnIdx, "Ù khan! 🎉", 3000);
-            this.endGame();
+            this.animateULayMelds(this.currentTurnIdx, () => {
+                this.endGame();
+            });
             return;
         }
 
@@ -1813,7 +2510,9 @@ class GameManager {
                         ai.isU = true;
                         this.logMessage(`${ai.name} đã Ù!`, 'alert');
                         this.showStatusBubble(this.currentTurnIdx, "Ù! 🎉", 3000);
-                        this.endGame();
+                        this.animateULayMelds(this.currentTurnIdx, () => {
+                            this.endGame();
+                        });
                         return;
                     }
 
@@ -1907,6 +2606,7 @@ class GameManager {
     runAIMeldTurn() {
         let ai = this.players[this.currentTurnIdx];
         ai.melds = [];
+        ai.hasLaidMelds = true; // Đã hạ bài
         
         let partition = getBestPartitions(ai.hand);
         let totalMeldsCount = ai.eaten.length + partition.phoms.length;
@@ -1949,6 +2649,13 @@ class GameManager {
         this.renderMelds();
 
         const proceed = () => {
+            if (ai.hand.length === 0) {
+                ai.isU = true;
+                this.logMessage(`${ai.name} đã Ù (Ù hạ hết)!`, 'alert');
+                this.showStatusBubble(this.currentTurnIdx, "Ù! 🎉", 3000);
+                this.endGame();
+                return;
+            }
             this.turnStep = 'SEND_CARDS';
             this.updateHUD();
 
@@ -1992,47 +2699,71 @@ class GameManager {
         let ai = this.players[this.currentTurnIdx];
         let animationsToRun = [];
         
-        if (!ai.isMom) {
+        let hasNewSends = true;
+        while (hasNewSends) {
             let sends = this.findPossibleSends(this.currentTurnIdx);
-            if (sends.length > 0) {
-                sends.forEach(send => {
-                    const cardEl = document.getElementById(send.card.id);
-                    const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
-                    
-                    let removed = ai.removeCard(send.card.id);
-                    if (removed) {
-                        if (send.meldType === 'eaten') {
-                            this.players[send.targetPlayerIdx].eaten[send.meldIdx].push(removed);
-                        } else {
-                            this.players[send.targetPlayerIdx].melds[send.meldIdx].push(removed);
-                        }
-                        
-                        animationsToRun.push({
-                            card: removed,
-                            startRect: startRect
-                        });
-                        
-                        this.logMessage(`${ai.name} gửi lá ${removed.name} vào Phỏm của ${this.players[send.targetPlayerIdx].name}.`, 'ai');
+            if (sends.length === 0 || ai.isMom) {
+                hasNewSends = false;
+            } else {
+                let uniqueSends = [];
+                let seenCardIds = new Set();
+                for (let send of sends) {
+                    if (!seenCardIds.has(send.card.id)) {
+                        seenCardIds.add(send.card.id);
+                        uniqueSends.push(send);
                     }
-                });
+                }
                 
-                if (animationsToRun.length > 0) {
-                    AudioSynth.playClick();
-                    this.showStatusBubble(this.currentTurnIdx, `Gửi ${animationsToRun.length} lá!`, 2000);
+                if (uniqueSends.length === 0) {
+                    hasNewSends = false;
+                } else {
+                    uniqueSends.forEach(send => {
+                        const cardEl = document.getElementById(send.card.id);
+                        const startRect = cardEl ? cardEl.getBoundingClientRect() : null;
+                        
+                        let removed = ai.removeCard(send.card.id);
+                        if (removed) {
+                            if (send.meldType === 'eaten') {
+                                this.players[send.targetPlayerIdx].eaten[send.meldIdx].push(removed);
+                            } else {
+                                this.players[send.targetPlayerIdx].melds[send.meldIdx].push(removed);
+                            }
+                            
+                            animationsToRun.push({
+                                card: removed,
+                                startRect: startRect
+                            });
+                            
+                            this.logMessage(`${ai.name} gửi lá ${removed.name} vào Phỏm của ${this.players[send.targetPlayerIdx].name}.`, 'ai');
+                        }
+                    });
                 }
             }
+        }
+
+        if (animationsToRun.length > 0) {
+            AudioSynth.playClick();
+            this.showStatusBubble(this.currentTurnIdx, `Gửi ${animationsToRun.length} lá!`, 2000);
         }
 
         this.renderAIHands();
         this.renderMelds();
 
         const proceed = () => {
-            let nextIdx = (this.currentTurnIdx + 1) % 4;
+            if (ai.hand.length === 0) {
+                ai.isU = true;
+                this.logMessage(`${ai.name} đã gửi hết bài và Ù!`, 'alert');
+                this.showStatusBubble(this.currentTurnIdx, "Ù! 🎉", 3000);
+                this.endGame();
+                return;
+            }
+            let nextIdx = (this.currentTurnIdx + this.playDirection + 4) % 4;
             if (nextIdx === this.meldStartIdx) {
                 this.endGame();
             } else {
                 this.currentTurnIdx = nextIdx;
                 this.turnStep = 'LAY_MELDS';
+                this.updateSingleAvatarForMeldPhase(nextIdx);
                 this.updateHUD();
                 
                 if (nextIdx !== 0) {
@@ -2149,6 +2880,11 @@ class GameManager {
         hand.forEach(card => {
             // Scan other players' Phoms (and own Phoms)
             this.players.forEach((targetPlayer, targetIdx) => {
+                // CHỈ CHO PHÉP gửi tới người chơi khác khi họ đã hạ bài
+                if (targetIdx !== playerIdx && !targetPlayer.hasLaidMelds) {
+                    return;
+                }
+
                 // Hand Phoms
                 targetPlayer.melds.forEach((meld, meldIdx) => {
                     if (this.canExtendMeld(meld, card)) {
@@ -2211,25 +2947,28 @@ class GameManager {
         let payer = this.players[payerIdx];
         let earner = this.players[earnerIdx];
         
-        // Standard eat penalty: 1x bet
-        // If it's a chot card: 4x bet
-        let isChot = (payer.discardCount === 4); // The card just eaten was their 4th discard card
-        let multiplier = isChot ? 4 : 1;
-        let penaltyAmount = this.betAmount * multiplier;
+        let isChot = (payer.discardCount === 4);
+        let points = isChot ? 2 : 1;
         
-        payer.balance -= penaltyAmount;
-        earner.balance += penaltyAmount;
+        payer.balance -= points;
+        earner.balance += points;
+        
+        payer.matchEatPoints -= points;
+        earner.matchEatPoints += points;
 
         // Visual effects
-        this.createFloatingTextOnPlayer(payerIdx, `-${penaltyAmount.toLocaleString()}`, true, false);
-        this.createFloatingTextOnPlayer(earnerIdx, `+${penaltyAmount.toLocaleString()}`, false, true);
+        this.createFloatingTextOnPlayer(payerIdx, `-${points} Điểm`, true, false);
+        this.createFloatingTextOnPlayer(earnerIdx, `+${points} Điểm`, false, true);
 
         if (isChot) {
             AudioSynth.playChot();
-            this.logMessage(`[CHỐT!] ${earner.name} đã ăn CHỐT của ${payer.name}! Phạt ${penaltyAmount.toLocaleString()} Xu!`, 'alert');
+            this.logMessage(`[CHỐT!] ${earner.name} đã ăn CHỐT của ${payer.name}! (+2 Điểm)`, 'alert');
         } else {
-            this.logMessage(`${earner.name} ăn bài của ${payer.name}. Phạt ${penaltyAmount.toLocaleString()} Xu.`, 'system');
+            this.logMessage(`${earner.name} ăn bài của ${payer.name}. (+1 Điểm)`, 'system');
         }
+
+        // Decrement payer's discardCount since their discarded card was eaten
+        payer.discardCount--;
 
         // Track consecutive eats for đền bài (eating 3 times in a row leads to paying for everyone)
         // If player A got eaten by player B (who is A's next player), we increment consecutive counts
@@ -2244,9 +2983,9 @@ class GameManager {
 
     applyEatShift(eatenPlayerIdx) {
         let target = eatenPlayerIdx;
-        let prev1 = (target - 1 + 4) % 4;
-        let prev2 = (target - 2 + 4) % 4;
-        let prev3 = (target - 3 + 4) % 4;
+        let prev1 = (target - this.playDirection + 4) % 4;
+        let prev2 = (target - 2 * this.playDirection + 8) % 4;
+        let prev3 = (target - 3 * this.playDirection + 12) % 4;
 
         let shifts = [
             { from: prev1, to: target },
@@ -2283,7 +3022,12 @@ class GameManager {
         shiftActions.forEach(action => {
             this.tableDiscards[action.from].pop();
             this.tableDiscards[action.to].push(action.card);
-            this.logMessage(`Chuyển bài rác ${action.card.name} từ khay của ${this.players[(action.from + 1) % 4].name} sang khay của ${this.players[(action.to + 1) % 4].name}.`, 'system');
+            
+            // Sync players' discardCount
+            this.players[action.from].discardCount--;
+            this.players[action.to].discardCount++;
+            
+            this.logMessage(`Chuyển bài rác ${action.card.name} từ khay của ${this.players[action.from].name} sang khay của ${this.players[action.to].name}.`, 'system');
         });
 
         // Render DOM once after all shifts are applied
@@ -2334,114 +3078,240 @@ class GameManager {
         // If someone U'd, they are automatically 1st and others pay them
         let uPlayer = this.players.find(p => p.isU);
         
+        // Calculate scores for players (U is 0, Mom is 999)
+        this.players.forEach(p => {
+            let partition = getBestPartitions(p.hand);
+            p.score = p.isMom ? 999 : (p.isU ? 0 : partition.score);
+        });
+
+        // Sort players to decide placements
+        // Rank from lowest score to highest score
+        let sortedPlayers = [...this.players].sort((a, b) => {
+            if (a.isU && !b.isU) return -1;
+            if (!a.isU && b.isU) return 1;
+            
+            if (a.isMom && !b.isMom) return 1;
+            if (!a.isMom && b.isMom) return -1;
+            
+            if (a.score !== b.score) return a.score - b.score;
+            
+            // Proximity to meld start (closer to meldStartIdx in turn order lays down earlier)
+            let distA = (a.id - this.meldStartIdx) * this.playDirection;
+            distA = (distA % 4 + 4) % 4;
+            let distB = (b.id - this.meldStartIdx) * this.playDirection;
+            distB = (distB % 4 + 4) % 4;
+            return distA - distB;
+        });
+
+        // Assign placement indices
+        sortedPlayers.forEach((p, idx) => {
+            p.placement = idx + 1; // 1st, 2nd, 3rd, 4th
+        });
+
+        // Calculate points based on the number of Móm players
+        let numMom = this.players.filter(p => p.isMom).length;
+        let pointChanges = [0, 0, 0, 0]; // index matches player.id
+        let winner = sortedPlayers[0];
+
         if (uPlayer) {
-            AudioSynth.playWin();
-            this.logMessage(`${uPlayer.name} đã Ù thắng tuyệt đối!`, 'win');
-            
-            // Distribute winnings
-            // Each player pays U player 5x bet
-            // Unless there is a player who must "Đền" (if a player got eaten 3 times by the U player)
-            // Or if a player got eaten 3 times, they pay for ALL players!
-            let denPlayerIdx = this.consecutiveEatenCounts.findIndex(count => count === 3);
-            let denPlayer = denPlayerIdx !== -1 ? this.players[denPlayerIdx] : null;
-
-            this.players.forEach((p, idx) => {
-                if (p.id === uPlayer.id) return;
-                p.score = 99; // Dummy score
-                
-                let payAmount = this.betAmount * 5;
-                
-                if (denPlayer) {
-                    // Den player pays for this player!
-                    denPlayer.balance -= payAmount;
-                    uPlayer.balance += payAmount;
-                    this.createFloatingTextOnPlayer(denPlayerIdx, `-${payAmount.toLocaleString()}`, true, false);
+            // Khi một người Ù thì thu mỗi người 2 điểm (Ù thắng thu mỗi người 2đ, tức là +6đ)
+            this.players.forEach(p => {
+                if (p.id === uPlayer.id) {
+                    pointChanges[p.id] = 6;
+                    p.placement = 1;
                 } else {
-                    p.balance -= payAmount;
-                    uPlayer.balance += payAmount;
-                    this.createFloatingTextOnPlayer(p.id, `-${payAmount.toLocaleString()}`, true, false);
+                    pointChanges[p.id] = -2;
+                    p.placement = 4;
                 }
             });
-            
-            if (denPlayer) {
-                this.logMessage(`${denPlayer.name} đền bài! Trả toàn bộ tiền phạt (15x cược) cho ${uPlayer.name}!`, 'alert');
-                this.createFloatingTextOnPlayer(uPlayer.id, `+${(this.betAmount * 15).toLocaleString()}`, false, true);
-            } else {
-                this.createFloatingTextOnPlayer(uPlayer.id, `+${(this.betAmount * 15).toLocaleString()}`, false, true);
-            }
-
-            // Assign placements
-            this.players.forEach(p => {
-                if (p.id === uPlayer.id) p.placement = 1;
-                else p.placement = 4; // Everyone else ranks last
-            });
-            
+            this.logMessage(`${uPlayer.name} đã Ù thắng tuyệt đối! Thu mỗi người 2 điểm (+6 Điểm).`, 'win');
         } else {
-            // No one U'd. Calculate score based on remaining rubbish cards
-            this.players.forEach(p => {
-                let partition = getBestPartitions(p.hand);
-                p.score = p.isMom ? 999 : partition.score; // Mom gets 999 (highest score, auto last)
-            });
-
-            // Sort players to decide placements
-            // Rank from lowest score to highest score
-            // If scores are equal, who laid down phoms first wins?
-            // Turn order starts at dealerIdx, so we calculate proximity to dealer
-            let sortedPlayers = [...this.players].sort((a, b) => {
-                if (a.score !== b.score) return a.score - b.score;
-                // Proximity to dealer (closer to dealer in turn order lays down earlier)
-                let distA = (a.id - this.dealerIdx + 4) % 4;
-                let distB = (b.id - this.dealerIdx + 4) % 4;
-                return distA - distB;
-            });
-
-            // Assign placement indices
-            sortedPlayers.forEach((p, idx) => {
-                p.placement = idx + 1; // 1st, 2nd, 3rd, 4th
-            });
-
-            // Calculate payouts:
-            // 1st wins:
-            // - 2nd pays 1st: 1x bet
-            // - 3rd pays 1st: 2x bet
-            // - 4th pays 1st: 3x bet
-            // - If Mom: pays 1st 4x bet
-            
-            let winner = sortedPlayers[0];
-            let totalWinnings = 0;
-            
-            sortedPlayers.forEach((p, idx) => {
-                if (idx === 0) return; // Skip winner
+            if (numMom === 4) {
+                // Cả 4 người bị Móm thì không ai chiến thắng.
+                this.players.forEach(p => {
+                    pointChanges[p.id] = 0;
+                    p.placement = 4;
+                });
+                this.logMessage("Cả 4 người chơi đều bị Móm. Ván này hòa, không ai nhận điểm.", "alert");
+            } else if (numMom === 3) {
+                // Trường hợp 3 người bị Móm thì cả 3 người bị móm mỗi người -1; Nhất +3;
+                this.players.forEach(p => {
+                    if (p.isMom) {
+                        pointChanges[p.id] = -1;
+                        p.placement = 4;
+                    } else {
+                        pointChanges[p.id] = 3;
+                        p.placement = 1;
+                    }
+                });
+                this.logMessage(`3 người bị Móm. ${winner.name} (Nhất) +3 điểm, 3 người móm mỗi người -1 điểm.`, "system");
+            } else if (numMom === 2) {
+                // Trường hợp 2 người bị móm thì mỗi người bị móm -2; Nhất +3; Nhì +1
+                let nonMomPlayers = sortedPlayers.filter(p => !p.isMom);
+                let p1st = nonMomPlayers[0];
+                let p2nd = nonMomPlayers[1];
                 
-                let multiplier = 1;
-                if (p.isMom) {
-                    multiplier = 4;
-                    this.logMessage(`${p.name} bị Móm (Cháy bài)! Chịu phạt nặng.`, 'alert');
-                } else {
-                    multiplier = idx; // 2nd (idx 1) pays 1x, 3rd (idx 2) pays 2x, 4th (idx 3) pays 3x
-                }
+                pointChanges[p1st.id] = 3;
+                pointChanges[p2nd.id] = 1;
                 
-                let amount = this.betAmount * multiplier;
-                p.balance -= amount;
-                totalWinnings += amount;
+                this.players.forEach(p => {
+                    if (p.isMom) {
+                        pointChanges[p.id] = -2;
+                        p.placement = 4;
+                    }
+                });
+                this.logMessage(`2 người bị Móm. ${p1st.name} (Nhất) +3 điểm, ${p2nd.name} (Nhì) +1 điểm, 2 người móm mỗi người -2 điểm.`, "system");
+            } else if (numMom === 1) {
+                // Trường hợp 1 người Móm thì người móm -3; Nhất +2; Nhì +1
+                let nonMomPlayers = sortedPlayers.filter(p => !p.isMom);
+                let p1st = nonMomPlayers[0];
+                let p2nd = nonMomPlayers[1];
+                let p3rd = nonMomPlayers[2];
                 
-                this.createFloatingTextOnPlayer(p.id, `-${amount.toLocaleString()}`, true, false);
-            });
-
-            winner.balance += totalWinnings;
-            this.createFloatingTextOnPlayer(winner.id, `+${totalWinnings.toLocaleString()}`, false, true);
-            
-            if (winner.id === 0) {
-                AudioSynth.playWin();
-                this.logMessage(`Bạn đã giành chiến thắng ván đấu này! Nhận được ${totalWinnings.toLocaleString()} Xu.`, 'win');
+                pointChanges[p1st.id] = 2;
+                pointChanges[p2nd.id] = 1;
+                pointChanges[p3rd.id] = 0;
+                
+                this.players.forEach(p => {
+                    if (p.isMom) {
+                        pointChanges[p.id] = -3;
+                        p.placement = 4;
+                    }
+                });
+                this.logMessage(`1 người bị Móm. ${p1st.name} (Nhất) +2 điểm, ${p2nd.name} (Nhì) +1 điểm, ${p3rd.name} (Ba) 0 điểm, ${this.players.find(p => p.isMom).name} (Móm) -3 điểm.`, "system");
             } else {
-                AudioSynth.playLose();
-                this.logMessage(`${winner.name} giành chiến thắng ván đấu. Nhận được ${totalWinnings.toLocaleString()} Xu.`, 'system');
+                // numMom === 0
+                // Nhất +2; Nhì +1; Ba -1 và Bét -2
+                let p1st = sortedPlayers[0];
+                let p2nd = sortedPlayers[1];
+                let p3rd = sortedPlayers[2];
+                let p4th = sortedPlayers[3];
+                
+                pointChanges[p1st.id] = 2;
+                pointChanges[p2nd.id] = 1;
+                pointChanges[p3rd.id] = -1;
+                pointChanges[p4th.id] = -2;
+                this.logMessage(`Không ai bị Móm. ${p1st.name} (Nhất) +2 điểm, ${p2nd.name} (Nhì) +1 điểm, ${p3rd.name} (Ba) -1 điểm, ${p4th.name} (Bét) -2 điểm.`, "system");
             }
         }
 
-        // Increment dealer for next game
-        this.dealerIdx = (this.dealerIdx + 1) % 4;
+        // Apply point changes to balance
+        this.players.forEach(p => {
+            p.balance += pointChanges[p.id];
+            p.matchPlacementPoints = pointChanges[p.id];
+            let changeVal = pointChanges[p.id];
+            if (changeVal > 0) {
+                this.createFloatingTextOnPlayer(p.id, `+${changeVal} Điểm`, false, true);
+            } else if (changeVal < 0) {
+                this.createFloatingTextOnPlayer(p.id, `${changeVal} Điểm`, true, false);
+            } else {
+                this.createFloatingTextOnPlayer(p.id, `0 Điểm`, false, false);
+            }
+        });
+
+        // Log final actual match score changes
+        let finalChangesStr = this.players.map(p => {
+            let matchChange = p.matchEatPoints + p.matchPlacementPoints;
+            return `${p.name}: ${matchChange > 0 ? '+' : ''}${matchChange} Điểm`;
+        }).join(', ');
+        this.logMessage(`Tổng kết điểm ván này: ${finalChangesStr}.`, 'system');
+
+        // Save scores to history (net match score change: placement points + eat points)
+        this.scoreHistory.push(this.players.map(p => p.matchPlacementPoints + p.matchEatPoints));
+
+        // Save detailed record for history playback
+        let sorted = [...this.players].sort((a, b) => a.placement - b.placement);
+        let record = {
+            roundNumber: this.scoreHistory.length,
+            allMom: this.players.every(pl => pl.isMom),
+            winnerName: sorted[0] ? sorted[0].name : '',
+            winnerId: sorted[0] ? sorted[0].id : -1,
+            winnerIsU: sorted[0] ? sorted[0].isU : false,
+            players: sorted.map(p => {
+                let allPhoms = this.getPlayerAllPhoms(p);
+                let phomsText = 'Không';
+                if (p.isU) {
+                    let uPhomsStr = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
+                    phomsText = uPhomsStr ? `Ù (${uPhomsStr})` : 'Ù';
+                } else if (allPhoms.length > 0) {
+                    phomsText = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
+                } else if (p.isMom) {
+                    phomsText = 'Móm (Cháy)';
+                }
+
+                let resultText = '';
+                let textColor = '';
+                let fontWeight = 'normal';
+                let allMom = this.players.every(pl => pl.isMom);
+                if (allMom) {
+                    resultText = 'Móm';
+                    textColor = '#ff5252';
+                } else {
+                    if (p.placement === 1) {
+                        resultText = p.isU ? 'Ù Thắng' : 'Nhất';
+                        textColor = '#72ff9f';
+                        fontWeight = 'bold';
+                    } else if (p.placement === 2) {
+                        resultText = 'Nhì';
+                    } else if (p.placement === 3) {
+                        resultText = 'Ba';
+                    } else {
+                        resultText = p.isMom ? 'Móm (Bét)' : 'Bét';
+                        textColor = '#ff5252';
+                    }
+                }
+
+                let matchChange = (p.matchEatPoints || 0) + (p.matchPlacementPoints || 0);
+                let breakdown = [];
+                if ((p.matchPlacementPoints || 0) !== 0 || resultText !== '') {
+                    breakdown.push(`${p.matchPlacementPoints > 0 ? '+' : ''}${p.matchPlacementPoints} ${resultText}`);
+                }
+                if ((p.matchEatPoints || 0) !== 0) {
+                    breakdown.push(`${p.matchEatPoints > 0 ? '+' : ''}${p.matchEatPoints} ${p.matchEatPoints > 0 ? 'Ăn' : 'Bị ăn'}`);
+                }
+                let breakdownStr = breakdown.length > 0 ? ` (${breakdown.join(', ')})` : '';
+
+                return {
+                    name: p.name,
+                    id: p.id,
+                    phomsText: phomsText,
+                    scoreText: p.isMom || p.isU ? '-' : p.score,
+                    resultText: resultText,
+                    textColor: textColor,
+                    fontWeight: fontWeight,
+                    matchChange: matchChange,
+                    breakdownStr: breakdownStr,
+                    balance: p.balance
+                };
+            })
+        };
+        this.gameHistoryRecords.push(record);
+
+        // Play sounds
+        if (uPlayer) {
+            AudioSynth.playU();
+        } else if (numMom === 4) {
+            AudioSynth.playLose();
+        } else if (winner.id === 0) {
+            AudioSynth.playWin();
+        } else {
+            AudioSynth.playLose();
+        }
+
+        // Determine dealer for next game: winner (placement === 1) of current game. If tie (4 Mom), rotate dealer
+        let winnerOfGame = this.players.find(p => p.placement === 1);
+        if (winnerOfGame) {
+            this.dealerIdx = winnerOfGame.id;
+            this.logMessage(`Người đứng Nhất (${winnerOfGame.name}) sẽ là người chia bài ván tiếp theo.`, 'system');
+        } else {
+            this.dealerIdx = (this.dealerIdx + this.playDirection + 4) % 4;
+            this.logMessage(`Ván đấu hòa. Người chia bài xoay vòng sang: ${this.players[this.dealerIdx].name}.`, 'system');
+        }
+
+        // Alternate play direction for the next game
+        this.playDirection = this.playDirection === 1 ? -1 : 1;
+        let directionStr = this.playDirection === 1 ? "Ngược Chiều Kim Đồng Hồ" : "Thuận Chiều Kim Đồng Hồ";
+        this.logMessage(`Hướng chơi và chia bài của ván tiếp theo sẽ là: ${directionStr}.`, 'system');
 
         this.renderAll();
         this.updateHUD();
@@ -2450,69 +3320,125 @@ class GameManager {
         }, 1000);
     }
 
-    showGameOverModal() {
+    showGameOverModal(pastRecord = null) {
         const body = document.getElementById('scoreTableBody');
         body.innerHTML = '';
 
-        // Sort players by placement for display
-        let sorted = [...this.players].sort((a, b) => a.placement - b.placement);
-        
-        sorted.forEach(p => {
+        const titleEl = document.getElementById('gameOverTitle');
+        const btnNextGame = document.getElementById('btnNextGame');
+        const announcement = document.getElementById('winnerAnnouncement');
+
+        let dataSrc;
+        if (pastRecord) {
+            this.isViewingHistoryRecord = true;
+            if (titleEl) titleEl.textContent = `Kết Quả Ván ${pastRecord.roundNumber}`;
+            if (btnNextGame) btnNextGame.textContent = 'Đóng';
+            dataSrc = pastRecord;
+        } else {
+            this.isViewingHistoryRecord = false;
+            if (titleEl) titleEl.textContent = 'Kết Quả Ván Đấu';
+            if (btnNextGame) btnNextGame.textContent = 'Chia Bài';
+            
+            // Build dynamic record from current state
+            let sorted = [...this.players].sort((a, b) => a.placement - b.placement);
+            let tempRecord = {
+                roundNumber: this.scoreHistory.length,
+                allMom: this.players.every(pl => pl.isMom),
+                winnerName: sorted[0] ? sorted[0].name : '',
+                winnerId: sorted[0] ? sorted[0].id : -1,
+                winnerIsU: sorted[0] ? sorted[0].isU : false,
+                players: sorted.map(p => {
+                    let allPhoms = this.getPlayerAllPhoms(p);
+                    let phomsText = 'Không';
+                    if (p.isU) {
+                        let uPhomsStr = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
+                        phomsText = uPhomsStr ? `Ù (${uPhomsStr})` : 'Ù';
+                    } else if (allPhoms.length > 0) {
+                        phomsText = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
+                    } else if (p.isMom) {
+                        phomsText = 'Móm (Cháy)';
+                    }
+
+                    let resultText = '';
+                    let textColor = '';
+                    let fontWeight = 'normal';
+                    let allMom = this.players.every(pl => pl.isMom);
+                    if (allMom) {
+                        resultText = 'Móm';
+                        textColor = '#ff5252';
+                    } else {
+                        if (p.placement === 1) {
+                            resultText = p.isU ? 'Ù Thắng' : 'Nhất';
+                            textColor = '#72ff9f';
+                            fontWeight = 'bold';
+                        } else if (p.placement === 2) {
+                            resultText = 'Nhì';
+                        } else if (p.placement === 3) {
+                            resultText = 'Ba';
+                        } else {
+                            resultText = p.isMom ? 'Móm (Bét)' : 'Bét';
+                            textColor = '#ff5252';
+                        }
+                    }
+
+                    let matchChange = (p.matchEatPoints || 0) + (p.matchPlacementPoints || 0);
+                    let breakdown = [];
+                    if ((p.matchPlacementPoints || 0) !== 0 || resultText !== '') {
+                        breakdown.push(`${p.matchPlacementPoints > 0 ? '+' : ''}${p.matchPlacementPoints} ${resultText}`);
+                    }
+                    if ((p.matchEatPoints || 0) !== 0) {
+                        breakdown.push(`${p.matchEatPoints > 0 ? '+' : ''}${p.matchEatPoints} ${p.matchEatPoints > 0 ? 'Ăn' : 'Bị ăn'}`);
+                    }
+                    let breakdownStr = breakdown.length > 0 ? ` (${breakdown.join(', ')})` : '';
+
+                    return {
+                        name: p.name,
+                        id: p.id,
+                        phomsText: phomsText,
+                        scoreText: p.isMom || p.isU ? '-' : p.score,
+                        resultText: resultText,
+                        textColor: textColor,
+                        fontWeight: fontWeight,
+                        matchChange: matchChange,
+                        breakdownStr: breakdownStr,
+                        balance: p.balance
+                    };
+                })
+            };
+            dataSrc = tempRecord;
+        }
+
+        // Render rows
+        dataSrc.players.forEach(p => {
             const tr = document.createElement('tr');
-            
-            // Format phoms text
-            let allPhoms = this.getPlayerAllPhoms(p);
-            let phomsText = 'Không';
-            if (p.isU) {
-                let uPhomsStr = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
-                phomsText = uPhomsStr ? `Ù (${uPhomsStr})` : 'Ù';
-            } else if (allPhoms.length > 0) {
-                phomsText = allPhoms.map(meld => meld.map(c => c.symbol + c.suitSymbol).join('-')).join(', ');
-            } else if (p.isMom) {
-                phomsText = 'Móm (Cháy)';
-            }
-
-            // Results text
-            let resultText = '';
-            let coinDelta = 0;
-            
-            // Calculate approximate coin change (rough estimate based on game result for display)
-            if (p.placement === 1) {
-                resultText = 'Nhất';
-                tr.style.color = '#72ff9f';
-                tr.style.fontWeight = 'bold';
-            } else if (p.placement === 2) {
-                resultText = 'Nhì';
-            } else if (p.placement === 3) {
-                resultText = 'Ba';
-            } else {
-                resultText = p.isMom ? 'Móm (Bét)' : 'Bét';
-                tr.style.color = '#ff5252';
-            }
-
-            if (p.isU) {
-                resultText = 'Ù Thắng';
-            }
+            if (p.textColor) tr.style.color = p.textColor;
+            if (p.fontWeight) tr.style.fontWeight = p.fontWeight;
 
             tr.innerHTML = `
                 <td>${p.name} ${p.id === 0 ? '(Ta)' : ''}</td>
-                <td>${phomsText}</td>
-                <td>${p.isMom || p.isU ? '-' : p.score}</td>
-                <td>${resultText}</td>
-                <td>${p.balance.toLocaleString()} Xu</td>
+                <td>${p.phomsText}</td>
+                <td>${p.scoreText}</td>
+                <td>${p.resultText}</td>
+                <td>
+                    ${p.matchChange > 0 ? '+' : ''}${p.matchChange} Điểm${p.breakdownStr}
+                    <br><span style="font-size: 0.85em; color: #aaa296; font-weight: normal;">(Tổng: ${p.balance > 0 ? '+' : ''}${p.balance}đ)</span>
+                </td>
             `;
             body.appendChild(tr);
         });
 
         // Set title announcement
-        const announcement = document.getElementById('winnerAnnouncement');
-        let win = sorted[0];
-        if (win.id === 0) {
-            announcement.textContent = win.isU ? "Chúc mừng! Bạn đã Ù thắng tuyệt đối!" : "Chúc mừng! Bạn đã giành chiến thắng!";
-            announcement.style.color = '#72ff9f';
+        if (dataSrc.allMom) {
+            announcement.textContent = "Không có người chiến thắng (Cả 4 người chơi đều bị Móm)";
+            announcement.style.color = '#ff5252';
         } else {
-            announcement.textContent = `${win.name} đã chiến thắng ván đấu này.`;
-            announcement.style.color = '#dfb76c';
+            if (dataSrc.winnerId === 0) {
+                announcement.textContent = dataSrc.winnerIsU ? "Chúc mừng! Bạn đã Ù thắng tuyệt đối!" : "Chúc mừng! Bạn đã giành chiến thắng!";
+                announcement.style.color = '#72ff9f';
+            } else {
+                announcement.textContent = `${dataSrc.winnerName} đã chiến thắng ván đấu này.`;
+                announcement.style.color = '#dfb76c';
+            }
         }
 
         const modal = document.getElementById('gameOverModal');
@@ -2520,6 +3446,66 @@ class GameManager {
         modal.classList.add('show');
         const btnMinimize = document.getElementById('btnMinimizeGameOver');
         if (btnMinimize) btnMinimize.textContent = '➖';
+    }
+
+    renderHistoryTable() {
+        const body = document.getElementById('historyTableBody');
+        if (!body) return;
+        body.innerHTML = '';
+        
+        if (this.scoreHistory.length === 0) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td colspan="5" style="text-align: center; color: #aaa296; padding: 10px;">Chưa có ván đấu nào được ghi nhận.</td>`;
+            body.appendChild(tr);
+            return;
+        }
+        
+        let totals = [0, 0, 0, 0];
+        
+        this.scoreHistory.forEach((scores, idx) => {
+            const tr = document.createElement('tr');
+            tr.classList.add('history-row');
+            tr.innerHTML = `
+                <td><span style="text-decoration: underline; color: #dfb76c;">Ván ${idx + 1}</span></td>
+                <td>${scores[0] > 0 ? '+' : ''}${scores[0]}</td>
+                <td>${scores[1] > 0 ? '+' : ''}${scores[1]}</td>
+                <td>${scores[2] > 0 ? '+' : ''}${scores[2]}</td>
+                <td>${scores[3] > 0 ? '+' : ''}${scores[3]}</td>
+            `;
+            tr.addEventListener('click', () => {
+                AudioSynth.playClick();
+                const historyModal = document.getElementById('historyModal');
+                if (historyModal) {
+                    historyModal.classList.remove('show');
+                }
+                this.returnToHistoryOnClose = true;
+                const record = this.gameHistoryRecords[idx];
+                if (record) {
+                    this.showGameOverModal(record);
+                }
+            });
+            body.appendChild(tr);
+            
+            // Accumulate totals
+            totals[0] += scores[0];
+            totals[1] += scores[1];
+            totals[2] += scores[2];
+            totals[3] += scores[3];
+        });
+
+        // Append a bold total row at the bottom
+        const trTotal = document.createElement('tr');
+        trTotal.style.fontWeight = 'bold';
+        trTotal.style.color = '#dfb76c';
+        trTotal.style.borderTop = '2px dashed #dfb76c';
+        trTotal.innerHTML = `
+            <td>Tổng</td>
+            <td>${totals[0] > 0 ? '+' : ''}${totals[0]}</td>
+            <td>${totals[1] > 0 ? '+' : ''}${totals[1]}</td>
+            <td>${totals[2] > 0 ? '+' : ''}${totals[2]}</td>
+            <td>${totals[3] > 0 ? '+' : ''}${totals[3]}</td>
+        `;
+        body.appendChild(trTotal);
     }
 }
 
