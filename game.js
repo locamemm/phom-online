@@ -3,17 +3,38 @@ class NetworkManager {
         this.socket = null;
         this.game = gameManager;
         this.clientId = null;
+        this.pendingMessages = [];
+        this.url = null;
     }
 
     connect(url) {
+        if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        this.url = url;
+        this.pendingMessages = [];
         this.socket = new WebSocket(url);
 
         this.socket.onopen = () => {
             console.log("Connected to server");
-            document.getElementById('onlineModal').classList.add('show');
+            const onlineModal = document.getElementById('onlineModal');
+            if (onlineModal) {
+                onlineModal.classList.add('show');
+                onlineModal.style.display = 'flex';
+            }
+            this.flushPendingMessages();
         };
 
-        this.socket.onclose = () => console.log("Disconnected from server");
+        this.socket.onerror = () => {
+            console.warn("WebSocket connection failed");
+            this.game.logMessage('Không thể kết nối máy chủ phòng chơi.', 'alert');
+        };
+
+        this.socket.onclose = () => {
+            console.log("Disconnected from server");
+            this.game.logMessage('Mất kết nối với máy chủ phòng chơi.', 'alert');
+        };
 
         this.socket.onmessage = (event) => {
             const message = JSON.parse(event.data);
@@ -21,8 +42,25 @@ class NetworkManager {
         };
     }
 
+    flushPendingMessages() {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+        while (this.pendingMessages.length > 0) {
+            const payload = this.pendingMessages.shift();
+            this.socket.send(payload);
+        }
+    }
+
     send(data) {
-        this.socket.send(JSON.stringify(data));
+        const payload = JSON.stringify(data);
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            this.socket.send(payload);
+            return;
+        }
+
+        this.pendingMessages.push(payload);
+        if (!this.socket || this.socket.readyState === WebSocket.CLOSED || this.socket.readyState === WebSocket.CLOSING) {
+            this.connect(this.url || 'ws://localhost:8080');
+        }
     }
 }
 
@@ -353,6 +391,8 @@ class GameManager {
         this.lastDiscardedPlayerIdx = -1;
         this.chotRound = false; // Is this round 4 (last round where eating causes chot)
         this.consecutiveEatenCounts = [0, 0, 0, 0]; // Track how many times a player was eaten consecutively by next player (for đền bài)
+        this.isMultiplayer = false;
+        this.gameHasStarted = false;
         
         this.gameHistory = [];
         this.scoreHistory = [];
@@ -364,6 +404,7 @@ class GameManager {
         this.baseWidth = 760;
         this.baseHeight = 520;
         
+        this.playerMap = {}; // Maps server clientId to client player index (0-3)
         this.network = new NetworkManager(this);
         this.initDOM();
         // this.resetGame(); // Don't start the game immediately in multiplayer
@@ -380,6 +421,53 @@ class GameManager {
         this.initWindowEvents();
     }
 
+    handleServerMessage(message) {
+        if (!message || !message.type) return;
+
+        switch (message.type) {
+            case 'REGISTER':
+                this.network.clientId = message.payload?.clientId || null;
+                this.logMessage('Đã kết nối máy chủ phòng chơi.', 'system');
+                break;
+            case 'JOIN_SUCCESS': {
+                const roomId = message.payload?.roomId || 'Không rõ';
+                const playerCount = message.payload?.playerCount || 1;
+                const onlineLobby = document.getElementById('onlineLobby');
+                const roomInfo = document.getElementById('roomInfo');
+                const roomIdDisplay = document.getElementById('roomIdDisplay');
+                const playerCountDisplay = document.getElementById('playerCountDisplay');
+                if (onlineLobby) onlineLobby.style.display = 'none';
+                if (roomInfo) roomInfo.style.display = 'block';
+                if (roomIdDisplay) roomIdDisplay.textContent = roomId;
+                if (playerCountDisplay) playerCountDisplay.textContent = `Đang chờ người chơi khác... (${playerCount}/4)`;
+                this.logMessage(`Đã tạo phòng ${roomId}. Chia sẻ mã phòng cho bạn bè!`, 'system');
+                break;
+            }
+            case 'PLAYER_JOINED': {
+                const playerCount = message.payload?.playerCount || 1;
+                const playerCountDisplay = document.getElementById('playerCountDisplay');
+                if (playerCountDisplay) {
+                    playerCountDisplay.textContent = `Đang chờ người chơi khác... (${playerCount}/4)`;
+                }
+                break;
+            }
+            case 'GAME_START':
+                this.logMessage('Trò chơi online đã bắt đầu.', 'system');
+                break;
+            case 'GAME_STATE_UPDATE':
+                this.logMessage('Đã cập nhật trạng thái phòng.', 'system');
+                break;
+            case 'PLAYER_LEFT':
+                this.logMessage('Một người chơi đã rời phòng.', 'system');
+                break;
+            case 'ERROR':
+                this.logMessage(message.payload?.message || 'Lỗi kết nối.', 'alert');
+                break;
+            default:
+                break;
+        }
+    }
+
     initCoreButtons() {
         // Core buttons
         document.getElementById('btnEat').addEventListener('click', () => this.playerEat());
@@ -388,6 +476,8 @@ class GameManager {
         document.getElementById('btnLayMelds').addEventListener('click', () => this.playerLayMelds());
         document.getElementById('btnRestart').addEventListener('click', () => this.manualRestart());
         document.getElementById('btnNextGame').addEventListener('click', () => this.startNextGame());
+        document.getElementById('btnPlayNow').addEventListener('click', () => this.startLocalGame());
+        document.getElementById('btnPlayWithFriends').addEventListener('click', () => this.startOnlineGame());
     }
 
     initModals() {
@@ -770,6 +860,45 @@ class GameManager {
         }
     }
 
+    hideStartScreen() {
+        const startModal = document.getElementById('startModal');
+        if (startModal) {
+            startModal.classList.remove('show');
+        }
+    }
+
+    startLocalGame() {
+        AudioSynth.init();
+        AudioSynth.playClick();
+        this.isMultiplayer = false;
+        this.gameHasStarted = true;
+        this.hideStartScreen();
+        const onlineModal = document.getElementById('onlineModal');
+        if (onlineModal) {
+            onlineModal.classList.remove('show');
+            onlineModal.style.display = 'none';
+            onlineModal.style.opacity = '0';
+            onlineModal.style.pointerEvents = 'none';
+        }
+        this.resetGame();
+    }
+
+    startOnlineGame() {
+        AudioSynth.init();
+        AudioSynth.playClick();
+        this.isMultiplayer = true;
+        this.gameHasStarted = true;
+        this.hideStartScreen();
+        const onlineModal = document.getElementById('onlineModal');
+        if (onlineModal) {
+            onlineModal.classList.add('show');
+            onlineModal.style.display = 'flex';
+            onlineModal.style.opacity = '1';
+            onlineModal.style.pointerEvents = 'auto';
+        }
+        this.network.connect('ws://localhost:8080');
+    }
+
     manualRestart() {
         AudioSynth.init();
         AudioSynth.playClick();
@@ -777,6 +906,8 @@ class GameManager {
             this.players.forEach(p => p.balance = 0);
             this.dealerIdx = 0;
             this.playDirection = 1;
+            this.isMultiplayer = false;
+            this.gameHasStarted = true;
             this.resetGame();
         }
     }
@@ -1764,57 +1895,56 @@ class GameManager {
     }
 
     playerDiscard() {
-        if (this.currentTurnIdx !== 0 || this.turnStep !== 'DISCARD') return;
         if (!this.selectedCardId) return;
+        if (this.currentTurnIdx !== 0 || this.turnStep !== 'DISCARD') return;
 
-        const cardEl = document.getElementById(this.selectedCardId);
-        const startRect = cardEl ? cardEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
+        const discardedCard = this.players[0].removeCard(this.selectedCardId);
+        if (!discardedCard) return;
 
         AudioSynth.playClick();
-        
-        // Find card
-        let card = this.players[0].removeCard(this.selectedCardId);
-        if (card) {
-            this.tableDiscards[0].push(card);
+
+        if (!this.isMultiplayer) {
+            const sourceCardEl = document.getElementById(discardedCard.id);
+            const startRect = sourceCardEl ? sourceCardEl.getBoundingClientRect() : { left: 0, top: 0, width: 64, height: 88 };
+
+            this.tableDiscards[0].push(discardedCard);
             this.players[0].discardCount++;
-            this.lastDiscardedCard = card;
+            this.lastDiscardedCard = discardedCard;
             this.lastDiscardedPlayerIdx = 0;
-            this.logMessage(`Bạn đã đánh lá ${card.name}.`, 'player');
-            
+            this.logMessage(`Bạn đã đánh lá ${discardedCard.name}.`, 'player');
             this.selectedCardId = null;
-            
+            this.selectedEatCardIds = [];
             this.renderPlayerHand();
             this.renderDiscardArea();
-            
-            const targetEl = document.getElementById(card.id);
+            this.updateHUD();
+
+            const targetEl = document.getElementById(discardedCard.id);
+            let endRect = { left: 0, top: 0, width: 64, height: 88 };
             if (targetEl) {
                 targetEl.style.opacity = '0';
-                const endRect = targetEl.getBoundingClientRect();
-                
-                this.animateCardFlying(card, startRect, endRect, true, () => {
-                    targetEl.style.opacity = '1';
-                    AudioSynth.playClick();
-                    this.createPixelSplash(endRect.left + endRect.width/2, endRect.top + endRect.height/2, '#ff5c5c');
-                    
-                    // Check for instant win (Ù) after discard?
-                    let checkU = getBestPartitions(this.players[0].hand);
-                    if (checkU.racs.length === 0) {
-                        this.players[0].isU = true;
-                        this.logMessage(`Bạn đã Ù!`, 'win');
-                        this.showStatusBubble(0, "Ù!!! 🎉", 3000);
-                        this.animateULayMelds(0, () => {
-                            this.endGame();
-                        });
-                        return;
-                    }
+                endRect = targetEl.getBoundingClientRect();
+            }
 
-                    // Move to next player
+            if (sourceCardEl || targetEl) {
+                this.animateCardFlying(discardedCard, startRect, endRect, true, () => {
+                    if (targetEl) {
+                        targetEl.style.opacity = '1';
+                    }
+                    AudioSynth.playClick();
+                    this.createPixelSplash(endRect.left + endRect.width / 2, endRect.top + endRect.height / 2, '#1a1a1a');
                     this.nextTurn();
-                });
+                }, 350);
             } else {
                 this.nextTurn();
             }
+            return;
         }
+
+        this.network.send({
+            type: 'PLAYER_ACTION',
+            payload: { cardId: this.selectedCardId }
+        });
+        this.disableAllActionButtons();
     }
 
     playerLayMelds() {

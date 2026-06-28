@@ -11,6 +11,21 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div class="modal-overlay start-modal show" id="startModal">
+        <div class="wood-modal">
+            <div class="modal-header">
+                <h2>Phỏm Chiếu Cói</h2>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <p style="margin-bottom: 18px;">Chọn chế độ chơi để bắt đầu một ván mới.</p>
+                <div class="start-buttons">
+                    <button class="wood-btn big-btn" id="btnPlayNow">Chơi ngay</button>
+                    <button class="wood-btn big-btn" id="btnPlayWithFriends">Chơi cùng bạn bè</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="game-wrapper">
         <!-- Ambient background lighting -->
         <div class="ambient-glow"></div>
@@ -165,7 +180,7 @@
 
         <!-- Popups & Modals -->
         <!-- 0. Online Modal (Create/Join Room) -->
-        <div class="modal-overlay" id="onlineModal">
+        <div class="modal-overlay" id="onlineModal" style="display: none; opacity: 0; pointer-events: none;">
             <div class="wood-modal">
                 <div class="modal-header">
                     <h2>Chơi Online</h2>

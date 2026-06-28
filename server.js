@@ -30,6 +30,7 @@ class ServerGameManager {
         this.deck = [];
         this.drawPile = [];
         this.currentTurnIdx = 0;
+        this.tableDiscards = [[], [], [], []];
         this.dealerIdx = 0; // Sẽ được cập nhật
         // ... và tất cả các thuộc tính trạng thái game khác
         this.broadcast = broadcastCallback; // Hàm để gửi thông tin cho các client trong phòng
@@ -37,13 +38,43 @@ class ServerGameManager {
 
     // Ví dụ một hàm xử lý hành động
     handleAction(clientId, action) {
-        console.log(`Game in room handling action from ${clientId}:`, action);
-        // 1. Xác thực hành động (có đúng lượt, có hợp lệ không?)
-        // 2. Cập nhật trạng thái game (this.players, this.deck, ...)
-        // 3. Gọi this.broadcast() để gửi trạng thái mới cho mọi người.
-        // Ví dụ:
-        // const newState = this.getGameState();
-        // this.broadcast({ type: 'GAME_STATE_UPDATE', payload: newState });
+        const playerIndex = this.players.findIndex(p => p.id === clientId);
+        if (playerIndex === -1) return; // Player not in this game
+
+        // --- VALIDATION ---
+        // 1. Is it the player's turn?
+        if (playerIndex !== this.currentTurnIdx) {
+            console.log(`[${this.roomId}] Invalid action: Not player ${clientId}'s turn.`);
+            return;
+        }
+
+        // --- ACTION HANDLING ---
+        if (action.payload.action === 'DISCARD') {
+            const cardId = action.payload.cardId;
+            const player = this.players[playerIndex];
+            const cardIndex = player.hand.findIndex(c => c.id === cardId);
+
+            // 2. Does the player have this card?
+            if (cardIndex === -1) {
+                console.log(`[${this.roomId}] Invalid action: Player ${clientId} does not have card ${cardId}.`);
+                return;
+            }
+
+            // --- STATE UPDATE ---
+            // Remove card from hand and add to discard pile
+            const discardedCard = player.hand.splice(cardIndex, 1)[0];
+            this.tableDiscards[playerIndex].push(discardedCard);
+
+            // Move to next turn
+            this.currentTurnIdx = (this.currentTurnIdx + 1) % 4; // Simple clockwise turn for now
+
+            console.log(`[${this.roomId}] Player ${clientId} discarded ${discardedCard.id}. Next turn is player ${this.players[this.currentTurnIdx].id}`);
+
+            // --- BROADCAST NEW STATE ---
+            // Send the updated state to all players in the room
+            this.broadcast({ type: 'GAME_STATE_UPDATE' });
+        }
+        // ... handle other actions like EAT, DRAW here
     }
 
     startGame(clientIds) {
@@ -53,6 +84,7 @@ class ServerGameManager {
             id: id, // Sử dụng clientId làm id người chơi
             name: `Player ${index + 1}`, // Tên tạm thời
             hand: [],
+            melds: [],
             // ... các thuộc tính khác của Player
         }));
 
@@ -84,7 +116,7 @@ class ServerGameManager {
         this.drawPile = this.deck; // Phần còn lại là Nọc
 
         // 4. Gửi trạng thái game cho từng người chơi
-        this.players.forEach((player, index) => {
+        this.players.forEach((player) => {
             const clientSocket = clients[player.id]?.ws;
             if (clientSocket && clientSocket.readyState === WebSocket.OPEN) {
                 const gameStateForPlayer = this.getGameStateForPlayer(player.id);
@@ -102,9 +134,11 @@ class ServerGameManager {
                 // Chỉ gửi bài của chính người chơi đó, người khác chỉ gửi số lượng
                 hand: p.id === clientId ? p.hand : null,
                 handCardCount: p.hand.length,
+                melds: p.melds, // Melds are always public
             })),
+            tableDiscards: this.tableDiscards,
             drawPileCount: this.drawPile.length,
-            currentTurnIdx: this.players.findIndex(p => p.id === this.players[this.currentTurnIdx].id), // Gửi index của lượt đi
+            currentTurnPlayerId: this.players.length > 0 ? this.players[this.currentTurnIdx].id : null,
             dealerIdx: this.dealerIdx,
         };
     }
@@ -231,13 +265,25 @@ function joinRoom(clientId, roomId) {
     }
 }
 
+/**
+ * Gửi tin nhắn tới tất cả client trong một phòng.
+ * Đặc biệt, khi gửi GAME_STATE_UPDATE, nó sẽ tùy chỉnh dữ liệu cho từng người.
+ */
 function broadcastToRoom(roomId, message, excludeClientId = null) {
     const room = rooms[roomId];
     if (!room) return;
 
-    const messageString = JSON.stringify(message);
     for (const [clientId, clientSocket] of room.clients.entries()) {
         if (clientId !== excludeClientId && clientSocket.readyState === WebSocket.OPEN) {
+            let messageToSend = message;
+            // Nếu là cập nhật trạng thái, hãy tạo "góc nhìn" riêng cho từng người
+            if (message.type === 'GAME_STATE_UPDATE') {
+                messageToSend = {
+                    type: 'GAME_STATE_UPDATE',
+                    payload: room.game.getGameStateForPlayer(clientId)
+                };
+            }
+            const messageString = JSON.stringify(messageToSend);
             clientSocket.send(messageString);
         }
     }

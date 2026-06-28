@@ -1026,6 +1026,22 @@ body {
 .log-message.alert { color: #ff5c5c; font-weight: bold; }
 
 /* Modals & Overlays (Retro Pixel block) */
+.start-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.start-buttons .wood-btn {
+    min-width: 180px;
+}
+
+.start-modal .wood-modal {
+    width: 460px;
+}
+
 .modal-overlay {
     position: fixed;
     top: 0;
