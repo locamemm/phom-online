@@ -1,11 +1,52 @@
 // server.js
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid'); // Thư viện để tạo ID duy nhất
 
 // Khởi tạo server WebSocket trên cổng 8080
-const wss = new WebSocket.Server({ port: 8080 });
+const PORT = Number(process.env.PORT) || 8080;
+const publicDir = __dirname;
+const mimeTypes = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png'
+};
 
-console.log("Phom Server is running on port 8080");
+const server = http.createServer((req, res) => {
+    const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const requestedPath = decodeURIComponent(requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname);
+    const filePath = path.resolve(publicDir, `.${requestedPath}`);
+
+    if (!filePath.startsWith(publicDir)) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+    }
+
+    fs.readFile(filePath, (error, content) => {
+        if (error) {
+            res.writeHead(error.code === 'ENOENT' ? 404 : 500);
+            res.end(error.code === 'ENOENT' ? 'Not found' : 'Server error');
+            return;
+        }
+
+        res.writeHead(200, {
+            'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+        });
+        res.end(content);
+    });
+});
+
+const wss = new WebSocket.Server({ server });
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Phom Server is running at http://localhost:${PORT}`);
+});
 
 /**
  * Cấu trúc dữ liệu chính của server
@@ -19,6 +60,13 @@ console.log("Phom Server is running on port 8080");
  */
 const rooms = {};
 const clients = {};
+const BOT_NAMES = ['Lâm Híp', 'Bác Ba Phi', 'Chị Hoa'];
+
+function sanitizePlayerName(name, fallback = 'Bạn') {
+    if (typeof name !== 'string') return fallback;
+    const cleanName = name.trim().replace(/\s+/g, ' ').slice(0, 18);
+    return cleanName || fallback;
+}
 
 // Đây là phiên bản Server của GameManager, chỉ chứa logic, không có DOM.
 // Trong thực tế, bạn sẽ chuyển toàn bộ logic từ game.js vào đây.
@@ -36,56 +84,54 @@ class ServerGameManager {
         this.broadcast = broadcastCallback; // Hàm để gửi thông tin cho các client trong phòng
     }
 
-    // Ví dụ một hàm xử lý hành động
     handleAction(clientId, action) {
+        if (!action || !action.action) return;
+
         const playerIndex = this.players.findIndex(p => p.id === clientId);
         if (playerIndex === -1) return; // Player not in this game
 
-        // --- VALIDATION ---
-        // 1. Is it the player's turn?
         if (playerIndex !== this.currentTurnIdx) {
             console.log(`[${this.roomId}] Invalid action: Not player ${clientId}'s turn.`);
             return;
         }
 
-        // --- ACTION HANDLING ---
-        if (action.payload.action === 'DISCARD') {
-            const cardId = action.payload.cardId;
+        if (action.action === 'DRAW') {
+            const player = this.players[playerIndex];
+            if (player.hand.length >= 10 || this.drawPile.length === 0) return;
+
+            player.hand.push(this.drawPile.pop());
+            this.broadcast({ type: 'GAME_STATE_UPDATE' });
+            return;
+        }
+
+        if (action.action === 'DISCARD') {
+            const cardId = action.cardId;
             const player = this.players[playerIndex];
             const cardIndex = player.hand.findIndex(c => c.id === cardId);
 
-            // 2. Does the player have this card?
             if (cardIndex === -1) {
                 console.log(`[${this.roomId}] Invalid action: Player ${clientId} does not have card ${cardId}.`);
                 return;
             }
 
-            // --- STATE UPDATE ---
-            // Remove card from hand and add to discard pile
             const discardedCard = player.hand.splice(cardIndex, 1)[0];
             this.tableDiscards[playerIndex].push(discardedCard);
-
-            // Move to next turn
-            this.currentTurnIdx = (this.currentTurnIdx + 1) % 4; // Simple clockwise turn for now
+            this.currentTurnIdx = (this.currentTurnIdx + 1) % 4;
 
             console.log(`[${this.roomId}] Player ${clientId} discarded ${discardedCard.id}. Next turn is player ${this.players[this.currentTurnIdx].id}`);
 
-            // --- BROADCAST NEW STATE ---
-            // Send the updated state to all players in the room
             this.broadcast({ type: 'GAME_STATE_UPDATE' });
         }
-        // ... handle other actions like EAT, DRAW here
     }
 
-    startGame(clientIds) {
-        console.log(`[${this.roomId}] Starting game with players:`, clientIds);
-        // 1. Tạo người chơi
-        this.players = clientIds.map((id, index) => ({
-            id: id, // Sử dụng clientId làm id người chơi
-            name: `Player ${index + 1}`, // Tên tạm thời
+    startGame(playerEntries) {
+        console.log(`[${this.roomId}] Starting game with players:`, playerEntries.map(p => p.id));
+        this.players = playerEntries.map((entry, index) => ({
+            id: entry.id,
+            name: entry.name || `Player ${index + 1}`,
+            isBot: Boolean(entry.isBot),
             hand: [],
             melds: [],
-            // ... các thuộc tính khác của Player
         }));
 
         // 2. Tạo và xáo bài (lấy từ game.js)
@@ -131,6 +177,7 @@ class ServerGameManager {
             players: this.players.map(p => ({
                 id: p.id,
                 name: p.name,
+                isBot: p.isBot,
                 // Chỉ gửi bài của chính người chơi đó, người khác chỉ gửi số lượng
                 hand: p.id === clientId ? p.hand : null,
                 handCardCount: p.hand.length,
@@ -139,6 +186,7 @@ class ServerGameManager {
             tableDiscards: this.tableDiscards,
             drawPileCount: this.drawPile.length,
             currentTurnPlayerId: this.players.length > 0 ? this.players[this.currentTurnIdx].id : null,
+            currentTurnIdx: this.currentTurnIdx,
             dealerIdx: this.dealerIdx,
         };
     }
@@ -147,7 +195,7 @@ class ServerGameManager {
 wss.on('connection', (ws) => {
     // 1. Gán một ID duy nhất cho client vừa kết nối
     const clientId = uuidv4();
-    clients[clientId] = { ws }; // Lưu lại đối tượng ws
+    clients[clientId] = { ws, name: 'Bạn' }; // Lưu lại đối tượng ws
     console.log(`Client connected with ID: ${clientId}`);
 
     // Gửi ID cho client để họ tự định danh
@@ -169,12 +217,16 @@ wss.on('connection', (ws) => {
         switch (data.type) {
             case 'CREATE_ROOM':
                 {
+                    clients[clientId].name = sanitizePlayerName(data.payload?.name);
                     const roomId = `phom-${uuidv4().substring(0, 4)}`;
                     // Tạo hàm broadcast riêng cho phòng này
                     const broadcast = (message) => broadcastToRoom(roomId, message);
 
                     rooms[roomId] = {
                         id: roomId,
+                        hostId: clientId,
+                        bots: [],
+                        gameStarted: false,
                         clients: new Map(), // Sử dụng Map để dễ dàng thêm/xóa client
                         game: new ServerGameManager(roomId, broadcast)
                     };
@@ -185,7 +237,12 @@ wss.on('connection', (ws) => {
                 break;
 
             case 'JOIN_ROOM':
+                clients[clientId].name = sanitizePlayerName(data.payload?.name);
                 joinRoom(clientId, data.payload.roomId);
+                break;
+
+            case 'ADD_BOT':
+                addBotToRoom(clientId);
                 break;
 
             case 'PLAYER_ACTION':
@@ -196,6 +253,7 @@ wss.on('connection', (ws) => {
                         if (room && room.game) {
                             // Chuyển hành động cho GameManager của phòng đó xử lý
                             room.game.handleAction(clientId, data.payload);
+                            scheduleBotTurn(room);
                         }
                     }
                 }
@@ -217,7 +275,7 @@ wss.on('connection', (ws) => {
                 // Thông báo cho những người còn lại trong phòng
                 broadcastToRoom(roomId, {
                     type: 'PLAYER_LEFT',
-                    payload: { clientId, playerCount: room.clients.size }
+                    payload: { clientId, playerCount: getRoomPlayerCount(room) }
                 });
 
                 // Nếu phòng trống, xóa phòng
@@ -241,7 +299,12 @@ function joinRoom(clientId, roomId) {
         return;
     }
 
-    if (room.clients.size >= 4) {
+    if (room.gameStarted) {
+        client.ws.send(JSON.stringify({ type: 'ERROR', payload: { message: `Phòng ${roomId} đã bắt đầu.` } }));
+        return;
+    }
+
+    if (getRoomPlayerCount(room) >= 4) {
         client.ws.send(JSON.stringify({ type: 'ERROR', payload: { message: `Phòng ${roomId} đã đầy.` } }));
         return;
     }
@@ -250,19 +313,110 @@ function joinRoom(clientId, roomId) {
     room.clients.set(clientId, client.ws);
     clients[clientId].roomId = roomId; // Lưu lại roomId cho client
 
-    console.log(`Client ${clientId} joined room ${roomId}. Player count: ${room.clients.size}`);
+    console.log(`Client ${clientId} joined room ${roomId}. Player count: ${getRoomPlayerCount(room)}`);
 
     // Gửi thông báo cho client vừa vào phòng thành công
-    client.ws.send(JSON.stringify({ type: 'JOIN_SUCCESS', payload: { roomId, playerCount: room.clients.size } }));
+    client.ws.send(JSON.stringify({
+        type: 'JOIN_SUCCESS',
+        payload: {
+            roomId,
+            playerCount: getRoomPlayerCount(room),
+            isHost: room.hostId === clientId
+        }
+    }));
 
     // Thông báo cho tất cả người chơi khác trong phòng về người chơi mới
-    broadcastToRoom(roomId, { type: 'PLAYER_JOINED', payload: { clientId, playerCount: room.clients.size } }, clientId);
+    broadcastToRoom(roomId, { type: 'PLAYER_JOINED', payload: { clientId, playerCount: getRoomPlayerCount(room) } }, clientId);
 
     // KIỂM TRA ĐỂ BẮT ĐẦU GAME
-    if (room.clients.size === 4) {
-        console.log(`Room ${roomId} is full. Starting game...`);
-        room.game.startGame(Array.from(room.clients.keys()));
+    startRoomGameIfReady(room);
+}
+
+function addBotToRoom(clientId) {
+    const clientInfo = clients[clientId];
+    if (!clientInfo || !clientInfo.roomId) return;
+
+    const room = rooms[clientInfo.roomId];
+    const client = clients[clientId];
+    if (!room || !client) return;
+
+    if (room.hostId !== clientId) {
+        client.ws.send(JSON.stringify({ type: 'ERROR', payload: { message: 'Chỉ chủ phòng mới được thêm BOT.' } }));
+        return;
     }
+
+    if (room.gameStarted) {
+        client.ws.send(JSON.stringify({ type: 'ERROR', payload: { message: 'Phòng đã bắt đầu.' } }));
+        return;
+    }
+
+    if (getRoomPlayerCount(room) >= 4) {
+        client.ws.send(JSON.stringify({ type: 'ERROR', payload: { message: 'Phòng đã đủ 4 người chơi.' } }));
+        return;
+    }
+
+    const botNumber = room.bots.length + 1;
+    room.bots.push({
+        id: `bot-${uuidv4().substring(0, 6)}`,
+        name: BOT_NAMES[room.bots.length] || `BOT ${botNumber}`,
+        isBot: true
+    });
+
+    broadcastToRoom(room.id, {
+        type: 'PLAYER_JOINED',
+        payload: { clientId: room.bots[room.bots.length - 1].id, playerCount: getRoomPlayerCount(room) }
+    });
+    startRoomGameIfReady(room);
+}
+
+function getRoomPlayerCount(room) {
+    return room.clients.size + room.bots.length;
+}
+
+function getRoomPlayerEntries(room) {
+    const humans = Array.from(room.clients.keys()).map((id, index) => ({
+        id,
+        name: clients[id]?.name || `Player ${index + 1}`,
+        isBot: false
+    }));
+
+    return humans.concat(room.bots).slice(0, 4);
+}
+
+function startRoomGameIfReady(room) {
+    if (!room || room.gameStarted || getRoomPlayerCount(room) !== 4) return;
+
+    console.log(`Room ${room.id} is full. Starting game...`);
+    room.gameStarted = true;
+    room.game.startGame(getRoomPlayerEntries(room));
+    scheduleBotTurn(room);
+}
+
+function scheduleBotTurn(room) {
+    if (!room || !room.gameStarted || !room.game.players.length) return;
+
+    const currentPlayer = room.game.players[room.game.currentTurnIdx];
+    if (!currentPlayer || !currentPlayer.isBot) return;
+
+    setTimeout(() => {
+        const latestRoom = rooms[room.id];
+        if (!latestRoom || !latestRoom.gameStarted) return;
+
+        const bot = latestRoom.game.players[latestRoom.game.currentTurnIdx];
+        if (!bot || !bot.isBot) return;
+
+        if (bot.hand.length < 10 && latestRoom.game.drawPile.length > 0) {
+            bot.hand.push(latestRoom.game.drawPile.pop());
+        }
+
+        const card = bot.hand.splice(Math.floor(Math.random() * bot.hand.length), 1)[0];
+        if (!card) return;
+
+        latestRoom.game.tableDiscards[latestRoom.game.currentTurnIdx].push(card);
+        latestRoom.game.currentTurnIdx = (latestRoom.game.currentTurnIdx + 1) % 4;
+        latestRoom.game.broadcast({ type: 'GAME_STATE_UPDATE' });
+        scheduleBotTurn(latestRoom);
+    }, 700);
 }
 
 /**

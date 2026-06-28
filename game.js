@@ -59,9 +59,18 @@ class NetworkManager {
 
         this.pendingMessages.push(payload);
         if (!this.socket || this.socket.readyState === WebSocket.CLOSED || this.socket.readyState === WebSocket.CLOSING) {
-            this.connect(this.url || 'ws://localhost:8080');
+            this.connect(this.url || getDefaultWebSocketUrl());
         }
     }
+}
+
+function getDefaultWebSocketUrl() {
+    if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}`;
+    }
+
+    return 'ws://localhost:8080';
 }
 
 // --- WEB AUDIO SYNTHESIZER ---
@@ -405,6 +414,8 @@ class GameManager {
         this.baseHeight = 520;
         
         this.playerMap = {}; // Maps server clientId to client player index (0-3)
+        this.onlineAnimationInProgress = false;
+        this.pendingOnlineState = null;
         this.network = new NetworkManager(this);
         this.initDOM();
         // this.resetGame(); // Don't start the game immediately in multiplayer
@@ -440,6 +451,7 @@ class GameManager {
                 if (roomInfo) roomInfo.style.display = 'block';
                 if (roomIdDisplay) roomIdDisplay.textContent = roomId;
                 if (playerCountDisplay) playerCountDisplay.textContent = `Đang chờ người chơi khác... (${playerCount}/4)`;
+                this.updateBotButtonVisibility(Boolean(message.payload?.isHost));
                 this.logMessage(`Đã tạo phòng ${roomId}. Chia sẻ mã phòng cho bạn bè!`, 'system');
                 break;
             }
@@ -452,9 +464,11 @@ class GameManager {
                 break;
             }
             case 'GAME_START':
+                this.applyOnlineGameState(message.payload);
                 this.logMessage('Trò chơi online đã bắt đầu.', 'system');
                 break;
             case 'GAME_STATE_UPDATE':
+                this.applyOnlineGameState(message.payload);
                 this.logMessage('Đã cập nhật trạng thái phòng.', 'system');
                 break;
             case 'PLAYER_LEFT':
@@ -466,6 +480,261 @@ class GameManager {
             default:
                 break;
         }
+    }
+
+    applyOnlineGameState(state) {
+        if (!state || !Array.isArray(state.players)) return;
+
+        const nextState = this.buildOnlineLocalState(state);
+        if (!nextState) return;
+
+        if (this.onlineAnimationInProgress) {
+            this.pendingOnlineState = nextState;
+            return;
+        }
+
+        const animation = this.detectOnlineAnimation(nextState);
+        if (animation) {
+            this.onlineAnimationInProgress = true;
+            this.animateOnlineStateTransition(nextState, animation);
+            return;
+        }
+
+        this.commitOnlineLocalState(nextState);
+    }
+
+    buildOnlineLocalState(state) {
+        const selfIdx = Math.max(0, state.players.findIndex(p => p.id === this.network.clientId));
+        const rotate = (index) => (index - selfIdx + 4) % 4;
+        const toCard = (card) => {
+            if (!card) return null;
+            if (card instanceof Card) return card;
+            return new Card(card.suit, card.rankIndex);
+        };
+        const hiddenCards = (count, ownerIdx) => Array.from({ length: count }, (_, idx) => {
+            const card = new Card(0, 0);
+            card.id = `hidden-${ownerIdx}-${idx}`;
+            return card;
+        });
+
+        const nextPlayers = [0, 1, 2, 3].map(i => new Player(i, `Player ${i + 1}`, 0, i !== 0));
+        state.players.forEach((serverPlayer, serverIdx) => {
+            const localIdx = rotate(serverIdx);
+            const player = nextPlayers[localIdx];
+            player.name = serverPlayer.name || (localIdx === 0 ? 'Bạn' : `Player ${serverIdx + 1}`);
+            player.isAI = Boolean(serverPlayer.isBot) || localIdx !== 0;
+            player.hand = Array.isArray(serverPlayer.hand)
+                ? serverPlayer.hand.map(toCard).filter(Boolean)
+                : hiddenCards(serverPlayer.handCardCount || 0, localIdx);
+            player.melds = Array.isArray(serverPlayer.melds)
+                ? serverPlayer.melds.map(meld => meld.map(toCard).filter(Boolean))
+                : [];
+        });
+
+        const serverDiscards = state.tableDiscards || [[], [], [], []];
+        const nextTableDiscards = [0, 1, 2, 3].map(localIdx => {
+            const serverIdx = (localIdx + selfIdx) % 4;
+            return (serverDiscards[serverIdx] || []).map(toCard).filter(Boolean);
+        });
+        const nextDrawPile = hiddenCards(state.drawPileCount || 0, 'draw');
+        const serverTurnIdx = Number.isInteger(state.currentTurnIdx)
+            ? state.currentTurnIdx
+            : state.players.findIndex(p => p.id === state.currentTurnPlayerId);
+
+        return {
+            players: nextPlayers,
+            tableDiscards: nextTableDiscards,
+            drawPile: nextDrawPile,
+            currentTurnIdx: rotate(Math.max(0, serverTurnIdx)),
+            dealerIdx: rotate(state.dealerIdx || 0)
+        };
+    }
+
+    commitOnlineLocalState(nextState) {
+        this.players = nextState.players;
+        this.tableDiscards = nextState.tableDiscards;
+        this.drawPile = nextState.drawPile;
+        this.currentTurnIdx = nextState.currentTurnIdx;
+        this.dealerIdx = nextState.dealerIdx;
+        this.turnStep = this.currentTurnIdx === 0 ? (this.players[0].hand.length >= 10 ? 'DISCARD' : 'ACTION') : 'ACTION';
+        this.isMultiplayer = true;
+        this.gameHasStarted = true;
+        this.selectedCardId = null;
+        this.selectedEatCardIds = [];
+        this.isDrawingOrEating = false;
+
+        const onlineModal = document.getElementById('onlineModal');
+        if (onlineModal) {
+            onlineModal.classList.remove('show');
+            onlineModal.style.display = 'none';
+            onlineModal.style.opacity = '0';
+            onlineModal.style.pointerEvents = 'none';
+        }
+
+        this.updatePlayerLabels();
+        this.renderAll();
+        this.updateHUD();
+    }
+
+    detectOnlineAnimation(nextState) {
+        if (!this.isMultiplayer || !this.gameHasStarted) return null;
+        if (!this.players || this.players.length !== 4) return null;
+
+        const currentHands = this.players.map(p => p.hand.length);
+        const nextHands = nextState.players.map(p => p.hand.length);
+        const currentDiscards = this.tableDiscards.map(slot => slot.length);
+        const nextDiscards = nextState.tableDiscards.map(slot => slot.length);
+        const currentDrawCount = this.drawPile.length;
+        const nextDrawCount = nextState.drawPile.length;
+
+        for (let i = 0; i < 4; i++) {
+            if (nextDiscards[i] > currentDiscards[i]) {
+                const card = nextState.tableDiscards[i][nextDiscards[i] - 1];
+                return { type: 'DISCARD', playerIdx: i, card };
+            }
+        }
+
+        for (let i = 0; i < 4; i++) {
+            if (nextHands[i] > currentHands[i] && nextDrawCount < currentDrawCount) {
+                const card = nextState.players[i].hand[nextHands[i] - 1];
+                return { type: 'DRAW', playerIdx: i, card };
+            }
+        }
+
+        return null;
+    }
+
+    animateOnlineStateTransition(nextState, animation) {
+        const startRect = this.getOnlineAnimationStartRect(animation);
+        this.commitOnlineLocalState(nextState);
+
+        requestAnimationFrame(() => {
+            const targetEl = this.getOnlineAnimationTargetElement(animation);
+            const endRect = targetEl
+                ? targetEl.getBoundingClientRect()
+                : this.getPlayerZoneRect(animation.playerIdx);
+
+            if (targetEl) targetEl.style.opacity = '0';
+
+            this.animateCardFlying(animation.card, startRect, endRect, true, () => {
+                if (targetEl) targetEl.style.opacity = '1';
+                this.createPixelSplash(endRect.left + endRect.width / 2, endRect.top + endRect.height / 2, animation.type === 'DRAW' ? '#dfb76c' : '#1a1a1a');
+                this.onlineAnimationInProgress = false;
+
+                if (this.pendingOnlineState) {
+                    const pendingState = this.pendingOnlineState;
+                    this.pendingOnlineState = null;
+                    this.commitOnlineLocalState(pendingState);
+                }
+            }, 350);
+        });
+    }
+
+    getOnlineAnimationStartRect(animation) {
+        if (animation.type === 'DRAW') {
+            const drawPileEl = document.getElementById('drawPile');
+            if (drawPileEl) return drawPileEl.getBoundingClientRect();
+        }
+
+        if (animation.type === 'DISCARD') {
+            const sourceEl = animation.playerIdx === 0
+                ? document.getElementById(animation.card.id)
+                : this.getPlayerHandElement(animation.playerIdx);
+            if (sourceEl) return sourceEl.getBoundingClientRect();
+        }
+
+        return this.getPlayerZoneRect(animation.playerIdx);
+    }
+
+    getOnlineAnimationTargetElement(animation) {
+        if (animation.type === 'DRAW') {
+            if (animation.playerIdx === 0) return document.getElementById(animation.card.id);
+            return this.getPlayerHandElement(animation.playerIdx);
+        }
+
+        if (animation.type === 'DISCARD') {
+            return document.getElementById(animation.card.id);
+        }
+
+        return null;
+    }
+
+    getPlayerHandElement(playerIdx) {
+        if (playerIdx === 0) return document.getElementById('playerHand');
+        return document.getElementById(`hand-${playerIdx}`);
+    }
+
+    getPlayerZoneRect(playerIdx) {
+        const zone = document.getElementById(`playerZone-${playerIdx}`) || document.getElementById('roomContainer');
+        if (zone) return zone.getBoundingClientRect();
+        return { left: 0, top: 0, width: 64, height: 88 };
+    }
+
+    updatePlayerLabels() {
+        this.players.forEach((player, idx) => {
+            const zone = document.getElementById(`playerZone-${idx}`);
+            const nameEl = zone ? zone.querySelector('.player-name') : null;
+            const avatarEl = zone ? zone.querySelector('.avatar') : null;
+            if (nameEl) nameEl.textContent = player.name;
+            if (avatarEl) avatarEl.textContent = this.getAvatarText(player.name, idx, player.isAI);
+        });
+    }
+
+    getAvatarText(name, idx, isAI) {
+        if (idx === 0 && (!name || name === 'Bạn')) return 'Ta';
+        const cleanName = (name || '').trim();
+        if (!cleanName) return isAI ? 'BOT' : `P${idx + 1}`;
+
+        const words = cleanName.split(/\s+/).filter(Boolean);
+        if (words.length >= 2) {
+            return words.slice(0, 2).map(word => word[0]).join('').toUpperCase();
+        }
+
+        return cleanName.slice(0, 2).toUpperCase();
+    }
+
+    ensureOnlineNameInput() {
+        const onlineControls = document.querySelector('#onlineLobby .online-controls-modal');
+        if (!onlineControls || document.getElementById('txtPlayerName')) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'txtPlayerName';
+        input.placeholder = 'Tên của bạn...';
+        input.maxLength = 18;
+        input.value = localStorage.getItem('phomPlayerName') || '';
+        input.style.marginBottom = '12px';
+
+        onlineControls.insertBefore(input, onlineControls.firstChild);
+    }
+
+    getOnlinePlayerName() {
+        const input = document.getElementById('txtPlayerName');
+        const rawName = input ? input.value.trim() : '';
+        const name = rawName.replace(/\s+/g, ' ').slice(0, 18) || 'Bạn';
+        localStorage.setItem('phomPlayerName', name);
+        return name;
+    }
+
+    ensureBotButton() {
+        const roomInfo = document.getElementById('roomInfo');
+        if (!roomInfo || document.getElementById('btnAddBot')) return;
+
+        const btnAddBot = document.createElement('button');
+        btnAddBot.className = 'wood-btn';
+        btnAddBot.id = 'btnAddBot';
+        btnAddBot.textContent = '+ BOT';
+        btnAddBot.style.marginTop = '12px';
+        btnAddBot.addEventListener('click', () => {
+            AudioSynth.playClick();
+            this.network.send({ type: 'ADD_BOT' });
+        });
+        roomInfo.appendChild(btnAddBot);
+    }
+
+    updateBotButtonVisibility(isHost) {
+        const btnAddBot = document.getElementById('btnAddBot');
+        if (btnAddBot) btnAddBot.style.display = isHost ? 'inline-block' : 'none';
     }
 
     initCoreButtons() {
@@ -712,16 +981,19 @@ class GameManager {
     }
 
     initOnlineActions() {
+        this.ensureOnlineNameInput();
+        this.ensureBotButton();
+
         document.getElementById('btnCreateRoom').addEventListener('click', () => {
             AudioSynth.playClick();
-            this.network.send({ type: 'CREATE_ROOM' });
+            this.network.send({ type: 'CREATE_ROOM', payload: { name: this.getOnlinePlayerName() } });
         });
 
         document.getElementById('btnJoinRoom').addEventListener('click', () => {
             AudioSynth.playClick();
             const roomId = document.getElementById('txtRoomId').value.trim();
             if (roomId) {
-                this.network.send({ type: 'JOIN_ROOM', payload: { roomId } });
+                this.network.send({ type: 'JOIN_ROOM', payload: { roomId, name: this.getOnlinePlayerName() } });
             }
         });
     }
@@ -896,7 +1168,7 @@ class GameManager {
             onlineModal.style.opacity = '1';
             onlineModal.style.pointerEvents = 'auto';
         }
-        this.network.connect('ws://localhost:8080');
+        this.network.connect(getDefaultWebSocketUrl());
     }
 
     manualRestart() {
@@ -1760,6 +2032,16 @@ class GameManager {
     playerDraw() {
         if (this.currentTurnIdx !== 0 || this.turnStep !== 'ACTION') return;
         if (this.isDrawingOrEating) return;
+
+        if (this.isMultiplayer) {
+            this.network.send({
+                type: 'PLAYER_ACTION',
+                payload: { action: 'DRAW' }
+            });
+            this.disableAllActionButtons();
+            return;
+        }
+
         this.isDrawingOrEating = true;
         
         if (this.drawPile.length === 0) {
@@ -1898,6 +2180,15 @@ class GameManager {
         if (!this.selectedCardId) return;
         if (this.currentTurnIdx !== 0 || this.turnStep !== 'DISCARD') return;
 
+        if (this.isMultiplayer) {
+            this.network.send({
+                type: 'PLAYER_ACTION',
+                payload: { action: 'DISCARD', cardId: this.selectedCardId }
+            });
+            this.disableAllActionButtons();
+            return;
+        }
+
         const discardedCard = this.players[0].removeCard(this.selectedCardId);
         if (!discardedCard) return;
 
@@ -1940,11 +2231,6 @@ class GameManager {
             return;
         }
 
-        this.network.send({
-            type: 'PLAYER_ACTION',
-            payload: { cardId: this.selectedCardId }
-        });
-        this.disableAllActionButtons();
     }
 
     playerLayMelds() {
@@ -3644,9 +3930,6 @@ function getBestPartitions(cards) {
 window.addEventListener('DOMContentLoaded', () => {
     AudioSynth.init();
     window.game = new GameManager();
-    // Connect to the server instead of starting the game directly
-    // Replace 'localhost' with your server's IP address if needed
-    window.game.network.connect('ws://localhost:8080');
 });
 
 // Auto-initialize audio on user gesture
